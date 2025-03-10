@@ -48,7 +48,48 @@ const Independent: React.FC = () => {
 
   const [agent] = useXAgent<string>({
     request: async ({ message }, { onSuccess }) => {
-      onSuccess(`Mock success return. You said: ${message}`);
+      try {
+        const currentConversation = conversationsItems.find(item => item.key === activeKey);
+        const messages = currentConversation?.messages || [];
+        
+        const response = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messages: [
+              ...messages.map(msg => ({
+                role: msg.status === 'local' ? 'user' : 'assistant',
+                content: msg.message
+              })),
+              { role: 'user', content: message }
+            ],
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('API request failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('No reader available');
+        }
+
+        let result = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = new TextDecoder().decode(value);
+          result += chunk;
+          onSuccess(result);
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        onSuccess('抱歉，发生了错误，请稍后重试。');
+      }
     },
   });
 
