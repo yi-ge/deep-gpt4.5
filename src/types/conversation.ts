@@ -1,7 +1,7 @@
 export interface Message {
   id: string | number
   message: string
-  status: 'local' | 'success' | 'loading' | 'error'
+  status: 'local' | 'success' | 'loading' | 'error' | 'streaming'
 }
 
 export interface Conversation {

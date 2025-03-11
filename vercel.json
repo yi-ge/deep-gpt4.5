@@ -4,6 +4,10 @@
     {
       "src": "/v1/chat/completions",
       "dest": "/api/completions.ts"
+    },
+    {
+      "src": "/v1/generate-title",
+      "dest": "/api/generate-title.ts"
     }
   ]
 }

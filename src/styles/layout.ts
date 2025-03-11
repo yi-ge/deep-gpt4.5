@@ -33,13 +33,44 @@ export const useStyle = createStyles(({ token, css }) => {
         max-height: 60px;
       }
     `,
+    menuButtons: css`
+      display: flex;
+      flex-direction: column;
+      padding: 0 12px;
+      margin-bottom: 12px;
+    `,
     conversations: css`
       padding: 0 12px;
       flex: 1;
       overflow-y: auto;
 
+      .ant-list-item {
+        position: relative;
+        padding-right: 40px;
+        
+        &:hover .deleteConversationBtn {
+          opacity: 1;
+        }
+      }
+
       @media (max-width: 768px) {
         display: none;
+      }
+    `,
+    conversationItemExtra: css`
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 10;
+    `,
+    deleteConversationBtn: css`
+      opacity: 0;
+      transition: opacity 0.3s;
+      
+      &:hover {
+        opacity: 1;
+        background-color: rgba(0, 0, 0, 0.05);
       }
     `,
     chat: css`
@@ -60,6 +91,44 @@ export const useStyle = createStyles(({ token, css }) => {
     messages: css`
       flex: 1;
       overflow-y: auto;
+    `,
+    messagesContainer: css`
+      position: relative;
+      flex: 1;
+      overflow-y: auto;
+    `,
+    messageDeleteOverlay: css`
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      z-index: 10;
+    `,
+    messageOverlayItem: css`
+      position: relative;
+      min-height: 48px;
+    `,
+    messageDeleteBtn: css`
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      opacity: 0.7;
+      pointer-events: auto;
+      background: transparent !important;
+      margin: 14px 0 8px 16px;
+      
+      &:hover {
+        opacity: 1;
+        background: transparent !important;
+      }
+    `,
+    messageDeleteBtnLocal: css`
+      left: 8px;
+    `,
+    messageDeleteBtnAI: css`
+      right: 8px;
     `,
     sender: css`
       box-shadow: ${token.boxShadow};
@@ -103,7 +172,17 @@ export const useStyle = createStyles(({ token, css }) => {
       background: #1677ff0f;
       border: 1px solid #1677ff34;
       width: calc(100% - 24px);
-      margin: 0 12px 24px 12px;
+      margin: 0 12px 12px 12px;
+
+      @media (max-width: 768px) {
+        display: none;
+      }
+    `,
+    clearBtn: css`
+      background: #ff40330f;
+      border: 1px solid #ff403334;
+      width: calc(100% - 24px);
+      margin: 0 12px 12px 12px;
 
       @media (max-width: 768px) {
         display: none;
@@ -116,6 +195,31 @@ export const useStyle = createStyles(({ token, css }) => {
       margin-bottom: 16px;
       color: ${token.colorTextSecondary};
       font-size: 14px;
+    `,
+    knowledgeUpdate: css`
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      margin: 12px;
+      background-color: #f5f5f5;
+      border-radius: 8px;
+      font-size: 14px;
+      color: ${token.colorTextSecondary};
+    `,
+    knowledgeText: css`
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    `,
+    knowledgeDeleteBtn: css`
+      opacity: 0.6;
+      transition: opacity 0.3s;
+      
+      &:hover {
+        opacity: 1;
+        background: transparent;
+      }
     `,
   }
 }) 

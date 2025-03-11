@@ -1,13 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "module": "ES2022",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
     "skipLibCheck": true,
     "rootDir": "./api",
     "outDir": "./build",
 
-    "moduleResolution": "node",
+    "moduleResolution": "NodeNext",
     "isolatedModules": true,
     "moduleDetection": "force",
     "noEmit": false,
@@ -16,7 +16,7 @@
     "forceConsistentCasingInFileNames": true,
 
     "baseUrl": ".",
-    "types": ["@vercel/edge", "@types/node"],
+    "types": ["@vercel/edge", "@edge-runtime/types"],
 
     /* Linting */
     "strict": true,

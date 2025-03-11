@@ -11,32 +11,69 @@ interface ChatMessage {
   content: string
 }
 
+interface ChatCompletionOptions {
+  model?: string
+  temperature?: number
+  max_tokens?: number
+  top_p?: number
+  frequency_penalty?: number
+  presence_penalty?: number
+  stop?: string[] | null
+  [key: string]: string | number | boolean | string[] | null | undefined // 使用更具体的类型代替any
+}
+
 // 使用环境变量创建OpenAI实例
 const openai = new OpenAI({
   baseURL: process.env.OPENAI_BASE_URL || undefined,
   apiKey: process.env.OPENAI_API_KEY || '',
 })
 
+const deepseek = new OpenAI({
+  baseURL: process.env.DEEPSEEK_BASE_URL || undefined,
+  apiKey: process.env.DEEPSEEK_API_KEY || '',
+})
+
 /**
- * 流式返回OpenAI聊天完成结果
- * 透传OpenAI的原始响应，包括思维链等特殊数据
+ * 流式返回聊天完成结果
+ * 透传OpenAI或Deepseek的原始响应，包括思维链等特殊数据
  */
-export async function* streamChatCompletion (messages: ChatMessage[]) {
+export async function* streamChatCompletion (
+  messages: ChatMessage[],
+  options: ChatCompletionOptions = {}
+) {
   try {
-    const stream = await openai.chat.completions.create({
-      model: "gpt-4.5-preview",
+    // 设置默认选项
+    const defaultOptions = {
+      model: "gpt-4o-mini",
+      temperature: 0.7,
+      max_tokens: 1000,
+      top_p: 1,
+      frequency_penalty: 0,
+      presence_penalty: 0,
+      stop: null
+    }
+
+    // 合并默认选项和用户传入的选项
+    const finalOptions = { ...defaultOptions, ...options }
+    const { model, ...restOptions } = finalOptions
+
+    // 根据模型名称选择使用哪个API实例
+    const apiClient = model.startsWith('deepseek') ? deepseek : openai
+
+    const stream = await apiClient.chat.completions.create({
+      model: model,
       messages: messages,
       stream: true,
-      temperature: 0.7,
+      ...restOptions
     })
 
-    // 直接透传OpenAI返回的每个chunk
+    // 直接透传API返回的每个chunk
     for await (const chunk of stream) {
       yield chunk
     }
   } catch (error: unknown) {
     // 错误处理，将错误包装成字符串返回
-    console.error('OpenAI API Error:', error)
+    console.error('API Error:', error)
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
     yield `Error: ${errorMessage}`
   }
@@ -53,19 +90,40 @@ export default async function handler (req: Request, context: RequestContext) {
 
   try {
     const body = await req.json()
-    const { messages } = body
+    const {
+      messages,
+      model = "gpt-4o-mini",
+      temperature,
+      max_tokens,
+      top_p,
+      frequency_penalty,
+      presence_penalty,
+      stop
+    } = body
+
+    const options: ChatCompletionOptions = {
+      model,
+      temperature,
+      max_tokens,
+      top_p,
+      frequency_penalty,
+      presence_penalty,
+      stop
+    }
+
+    // 过滤掉undefined的属性
+    Object.keys(options).forEach(key => {
+      if (options[key as keyof ChatCompletionOptions] === undefined) {
+        delete options[key as keyof typeof options]
+      }
+    })
 
     const stream = new ReadableStream({
       async start (controller) {
         const streamProcess = async () => {
           try {
-            for await (const chunk of streamChatCompletion(messages)) {
-              // 无论是什么类型的响应，都直接以JSON字符串形式传递
-              // 包括错误消息和所有类型的响应
-              const jsonChunk = typeof chunk === 'string'
-                ? JSON.stringify({ text: chunk }) // 将纯文本错误消息转为JSON对象
-                : JSON.stringify(chunk) // 直接序列化对象
-
+            for await (const chunk of streamChatCompletion(messages, options)) {
+              const jsonChunk = JSON.stringify(chunk)
               controller.enqueue(new TextEncoder().encode(`data: ${jsonChunk}\n\n`))
             }
             controller.close()
