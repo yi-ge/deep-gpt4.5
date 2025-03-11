@@ -72,19 +72,67 @@ const Independent: React.FC = () => {
           throw new Error('API request failed');
         }
 
+        // 使用fetch和ReadableStream处理
         const reader = response.body?.getReader();
         if (!reader) {
           throw new Error('No reader available');
         }
 
         let result = '';
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           
+          // 解码二进制数据为文本
           const chunk = new TextDecoder().decode(value);
-          result += chunk;
-          onSuccess(result);
+          
+          // 处理SSE格式数据
+          const parts = chunk.split('\n\n');
+          for (const part of parts) {
+            if (part.startsWith('data: ')) {
+              const data = part.substring(6);
+              if (data && data.trim()) {
+                try {
+                  // 所有响应现在都是JSON格式
+                  const jsonData = JSON.parse(data);
+                  
+                  // 处理纯文本错误消息
+                  if (jsonData.text && typeof jsonData.text === 'string') {
+                    if (jsonData.text.startsWith('Error:')) {
+                      console.error('API错误:', jsonData.text);
+                    } else {
+                      result += jsonData.text;
+                    }
+                  } 
+                  // 处理标准的OpenAI响应格式
+                  else if (jsonData.choices && jsonData.choices[0]) {
+                    // 提取content部分
+                    if (jsonData.choices[0].delta?.content) {
+                      result += jsonData.choices[0].delta.content;
+                    }
+                    
+                    // 如果有思维链，记录到控制台
+                    if (jsonData.choices[0].delta?.thinking) {
+                      console.log('思维链:', jsonData.choices[0].delta.thinking);
+                      // 这里可以添加思维链的特殊处理逻辑
+                    }
+                  }
+                  // 处理错误响应
+                  else if (jsonData.error) {
+                    console.error('处理错误:', jsonData.error);
+                  }
+                } catch (e) {
+                  // 如果JSON解析失败，可能是纯文本（旧格式的响应）
+                  console.error('JSON解析错误:', e);
+                  result += data;
+                }
+                
+                // 更新UI，始终展示累积的文本内容
+                onSuccess(result);
+              }
+            }
+          }
         }
       } catch (error) {
         console.error('Error:', error);
