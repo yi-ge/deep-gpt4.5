@@ -49,7 +49,7 @@ declare module '@ant-design/x' {
         role: string
         content: string
         footer?: React.ReactNode
-        modelData?: Record<string, any>
+        data?: Record<string, any>
       }>
       roles: Record<string, RoleConfig>
       className?: string

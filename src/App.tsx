@@ -23,6 +23,7 @@ import {
   Tooltip,
   Modal,
   Input,
+  Space,
 } from 'antd'
 import markdownit from 'markdown-it'
 
@@ -49,7 +50,7 @@ interface BubbleItem {
   header?: React.ReactNode // 添加header属性支持
   typing?: { step: number; interval: number }
   // 添加模型数据字段，以便创建不同的UI
-  modelData?: {
+  data?: {
     deepseekR1Message?: string
     gpt45Message?: string
     deepseekR1Status?: string
@@ -1325,7 +1326,7 @@ const Independent: React.FC = () => {
             <div style={buttonAreaStyle}>
               {/* 模型选择按钮组 */}
               {message.deepseekR1Message && message.gpt45Message && (
-                <Button.Group size='small' style={{ marginRight: '8px' }}>
+                <Space.Compact size='small' style={{ marginRight: '8px' }}>
                   <Tooltip title='显示DeepSeek R1回复'>
                     <Button
                       type={
@@ -1385,7 +1386,7 @@ const Independent: React.FC = () => {
                       对比
                     </Button>
                   </Tooltip>
-                </Button.Group>
+                </Space.Compact>
               )}
 
               {/* 复制按钮 */}
@@ -1462,7 +1463,7 @@ const Independent: React.FC = () => {
       // 对于非streaming状态的消息，不使用typing效果
       typing: shouldUseTypingEffect(message),
       // 将模型数据传递给消息，以便在footer中使用
-      modelData: {
+      data: {
         deepseekR1Message: message.deepseekR1Message,
         gpt45Message: message.gpt45Message,
         deepseekR1Status: message.deepseekR1Status,
@@ -1690,7 +1691,7 @@ const Independent: React.FC = () => {
                   content: displayContent,
                   // 对于非streaming状态的消息，不使用typing效果
                   typing: shouldUseTypingEffect(msg),
-                  modelData: {
+                  data: {
                     deepseekR1Message: msg.deepseekR1Message,
                     gpt45Message: msg.gpt45Message,
                     deepseekR1Status: msg.deepseekR1Status,
