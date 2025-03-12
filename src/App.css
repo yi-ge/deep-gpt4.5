@@ -1,1 +1,26 @@
 @import "tailwindcss";
+
+/* 消息气泡相关样式 */
+.message-footer-container {
+  position: relative;
+}
+
+/* 默认隐藏消息底部工具栏 */
+.message-footer {
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s ease;
+}
+
+/* 使用更精确的选择器，确保只有当前悬停的气泡的按钮显示 */
+/* Ant Design X的Bubble组件会在每个气泡外层创建容器 */
+.ant-x-bubble:hover .message-footer,
+.x-bubble:hover .message-footer,
+[class*="bubble-wrapper"]:hover .message-footer,
+[class*="bubble-container"]:hover .message-footer,
+[class*="bubble-content"]:hover .message-footer,
+.ant-list-item:hover .message-footer {
+  opacity: 1;
+  visibility: visible;
+}
+

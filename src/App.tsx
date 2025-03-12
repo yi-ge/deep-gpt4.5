@@ -1,5 +1,5 @@
 import { Bubble, Conversations, Sender, useXAgent } from '@ant-design/x'
-import type { BubbleProps } from '@ant-design/x'
+import type { BubbleProps, ConversationsProps } from '@ant-design/x'
 import * as React from 'react'
 import { useEffect, useState } from 'react'
 import './App.css'
@@ -10,8 +10,11 @@ import {
   DeleteOutlined,
   ClearOutlined,
   GithubOutlined,
+  CopyOutlined,
+  SyncOutlined,
+  EditOutlined,
 } from '@ant-design/icons'
-import { Button, message, Typography, Popconfirm, Tooltip } from 'antd'
+import { Button, message, Typography, Popconfirm, Tooltip, Space, Modal, Input } from 'antd'
 import markdownit from 'markdown-it'
 
 import { useStyle } from './styles/layout'
@@ -33,6 +36,7 @@ interface BubbleItem {
   loading: boolean
   role: string
   content: string
+  footer?: React.ReactNode // 添加footer属性支持
 }
 
 interface RoleConfig {
@@ -92,6 +96,22 @@ interface MessageWithTimestamp extends Message {
 
 const Independent: React.FC = () => {
   const { styles } = useStyle()
+
+  // 添加自定义样式，用于消息底部操作区域
+  const messageStyles = {
+    messageFooter: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: '4px 8px',
+      fontSize: '12px',
+    },
+    messageTime: {
+      color: 'rgba(0, 0, 0, 0.45)',
+      fontSize: '12px',
+    }
+  }
+
   const [content, setContent] = React.useState('')
 
   // 添加模型参数状态
@@ -113,13 +133,36 @@ const Independent: React.FC = () => {
     deleteMessage,
   } = useConversations()
 
-  // 添加悬停状态管理
-  const [hoveredMessage, setHoveredMessage] = useState<string | number | null>(
-    null
-  )
-
   // 将messages类型更新为包含时间戳
   const [messages, setMessages] = React.useState<MessageWithTimestamp[]>([])
+
+  // 添加重命名相关状态
+  const [isRenameModalVisible, setIsRenameModalVisible] = useState(false);
+  const [renameConversationKey, setRenameConversationKey] = useState<string>('');
+  const [newConversationName, setNewConversationName] = useState('');
+
+  // 打开重命名模态框
+  const showRenameModal = (key: string, currentName: string) => {
+    setRenameConversationKey(key);
+    setNewConversationName(currentName);
+    setIsRenameModalVisible(true);
+  };
+
+  // 处理重命名确认
+  const handleRenameConfirm = () => {
+    if (newConversationName.trim()) {
+      updateConversationTitle(renameConversationKey, newConversationName.trim());
+      message.success('会话已重命名');
+      setIsRenameModalVisible(false);
+    } else {
+      message.error('会话名称不能为空');
+    }
+  };
+
+  // 处理重命名取消
+  const handleRenameCancel = () => {
+    setIsRenameModalVisible(false);
+  };
 
   // 生成标题的函数
   const generateTitle = async (
@@ -282,6 +325,76 @@ const Independent: React.FC = () => {
     },
   })
 
+  // 复制消息内容到剪贴板
+  const handleCopyMessage = (content: string) => {
+    navigator.clipboard.writeText(content)
+    message.success('已复制到剪贴板')
+  }
+
+  // 重新请求AI回复
+  const handleResendMessage = (messageId: string | number) => {
+    // 找到这条消息的前一条用户消息
+    const messageIndex = messages.findIndex((msg) => msg.id === messageId)
+    if (messageIndex > 0) {
+      const prevUserMessage = messages[messageIndex - 1]
+      if (prevUserMessage.status === 'local') {
+        // 先从本地状态中删除当前AI消息
+        setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+        // 更新持久化存储
+        deleteMessage(activeKey, messageId);
+        
+        // 添加新的AI回复占位符，带有时间戳
+        const aiMsgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+        const newAiMessage: MessageWithTimestamp = {
+          id: aiMsgId,
+          message: '',
+          status: 'loading',
+          timestamp: new Date(),
+        }
+        
+        // 只添加AI消息占位符，不添加用户消息
+        setMessages((prev) => [...prev, newAiMessage]);
+        
+        // 调用agent处理请求
+        agent.request(
+          { message: prevUserMessage.message },
+          {
+            onSuccess: (result: string) => {
+              // 成功完成时更新状态为success
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMsgId
+                    ? { ...msg, message: result, status: 'success' }
+                    : msg
+                )
+              )
+            },
+            onUpdate: (partialResult: string) => {
+              // 收到部分结果时更新状态为streaming
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMsgId
+                    ? { ...msg, message: partialResult, status: 'streaming' }
+                    : msg
+                )
+              )
+            },
+            onError: (error: Error) => {
+              // 出错时更新状态为error
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMsgId
+                    ? { ...msg, message: `错误: ${error.message}`, status: 'error' }
+                    : msg
+                )
+              )
+            },
+          }
+        )
+      }
+    }
+  }
+
   const onRequest = (nextContent: string) => {
     if (!nextContent) return
 
@@ -414,16 +527,6 @@ const Independent: React.FC = () => {
     setActiveKey(key)
   }
 
-  const handleShare = () => {
-    navigator.clipboard.writeText(window.location.href)
-    message.success('链接已复制到剪贴板')
-  }
-
-  // 添加删除会话的处理函数
-  const handleDelete = (key: string) => {
-    deleteConversation(key)
-  }
-
   // 添加删除所有会话的处理函数
   const handleDeleteAll = () => {
     deleteAllConversations()
@@ -432,46 +535,192 @@ const Independent: React.FC = () => {
 
   // 处理删除消息
   const handleDeleteMessage = (messageId: string | number) => {
-    deleteMessage(activeKey, messageId)
+    // 从本地状态中删除消息
+    setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+    // 更新持久化存储
+    deleteMessage(activeKey, messageId);
+    message.success('消息已删除');
   }
 
-  const items: BubbleItem[] = messages.map(({ id, message, status }) => ({
-    key: id,
-    loading: status === 'loading', // 只有真正loading时才显示loading
-    role:
-      status === 'local'
-        ? 'local'
-        : status === 'streaming'
-        ? 'streaming'
-        : 'ai',
-    content: message,
-  }))
+  // 为每个消息生成Footer
+  const createMessageFooter = (
+    item: BubbleItem,
+    message: MessageWithTimestamp
+  ) => {
+    const isUserMessage = item.role === 'local'
+    const isAiMessage = !isUserMessage && item.role !== 'loading'
 
-  // 修改itemExtra实现悬停显示删除按钮
-  const renderItemExtra = (key: string) => {
+    // 格式化时间显示
+    let formattedTime = ''
+    try {
+      const timestamp = message.timestamp
+      if (timestamp) {
+        const date =
+          typeof timestamp === 'string' ? new Date(timestamp) : timestamp
+        formattedTime = `${date.toLocaleDateString()} ${date.toLocaleTimeString(
+          [],
+          { hour: '2-digit', minute: '2-digit' }
+        )}`
+      }
+    } catch (e) {
+      console.error('时间格式化出错:', e)
+    }
+
     return (
-      <div className={styles.conversationItemExtra}>
-        <Popconfirm
-          title='确定要删除这个会话吗？'
-          onConfirm={() => handleDelete(key)}
-          okText='是'
-          cancelText='否'
-        >
-          <Button
-            type='text'
-            size='small'
-            danger
-            icon={<DeleteOutlined />}
-            onClick={(e: React.MouseEvent) => e.stopPropagation()}
-            className={styles.deleteConversationBtn}
-          />
-        </Popconfirm>
+      <div 
+        style={messageStyles.messageFooter} 
+        className="message-footer"
+      >
+        {formattedTime && (
+          <span style={messageStyles.messageTime}>{formattedTime}</span>
+        )}
+        <Space size={4}>
+          {isAiMessage && (
+            <>
+              <Button
+                type='text'
+                size='small'
+                icon={<CopyOutlined />}
+                onClick={() => handleCopyMessage(item.content)}
+                title='复制内容'
+              />
+              <Button
+                type='text'
+                size='small'
+                icon={<SyncOutlined />}
+                onClick={() => handleResendMessage(item.key)}
+                title='重新生成'
+              />
+              <Popconfirm
+                title='确定要删除这条消息吗？'
+                onConfirm={() => handleDeleteMessage(item.key)}
+                okText='是'
+                cancelText='否'
+              >
+                <Button
+                  type='text'
+                  size='small'
+                  icon={<DeleteOutlined />}
+                  title='删除消息'
+                />
+              </Popconfirm>
+            </>
+          )}
+          {isUserMessage && (
+            <Popconfirm
+              title='确定要删除这条消息吗？'
+              onConfirm={() => handleDeleteMessage(item.key)}
+              okText='是'
+              cancelText='否'
+            >
+              <Button
+                type='text'
+                size='small'
+                icon={<DeleteOutlined />}
+                title='删除消息'
+              />
+            </Popconfirm>
+          )}
+        </Space>
       </div>
     )
   }
 
+  // 为每条消息添加footer属性
+  const items: BubbleItem[] = messages.map((message) => {
+    const item: BubbleItem = {
+      key: message.id,
+      loading: message.status === 'loading',
+      role:
+        message.status === 'local'
+          ? 'local'
+          : message.status === 'streaming'
+          ? 'streaming'
+          : 'ai',
+      content: message.message,
+    }
+
+    // 只为非loading状态的消息添加footer
+    if (message.status !== 'loading') {
+      item.footer = createMessageFooter(item, message)
+    }
+
+    return item
+  })
+
+  // 调试DOM结构的辅助函数（用完后注释掉）
+  // React.useEffect(() => {
+  //   const debugDOM = () => {
+  //     console.log('正在调试气泡DOM结构...');
+  //     // 查找所有气泡元素的类名
+  //     const bubbles = document.querySelectorAll('*');
+  //     const bubbleElements = Array.from(bubbles).filter(el => {
+  //       const className = el.className;
+  //       return typeof className === 'string' && (
+  //         className.includes('bubble') || 
+  //         className.includes('message') || 
+  //         className.includes('x-') || 
+  //         className.includes('ant-')
+  //       );
+  //     });
+  //     // 打印找到的元素
+  //     console.log('找到疑似气泡元素:', bubbleElements.length);
+  //     bubbleElements.forEach((el, index) => {
+  //       if (index < 10) { // 只打印前10个
+  //         console.log(`- 元素 ${index}:`, el.tagName, el.className);
+  //       }
+  //     });
+  //   };
+  //   // 延迟执行，确保DOM已渲染
+  //   setTimeout(debugDOM, 2000);
+  // }, [messages.length]);
+
+  // 定义会话菜单配置
+  const menuConfig: ConversationsProps['menu'] = (conversation) => ({
+    items: [
+      {
+        label: '重命名',
+        key: 'rename',
+        icon: <EditOutlined />,
+        onClick: () => {
+          // 打开重命名对话框
+          showRenameModal(conversation.key, conversation.label || '未命名会话');
+        },
+      },
+      {
+        label: '删除',
+        key: 'delete',
+        icon: <DeleteOutlined />,
+        danger: true,
+        onClick: () => {
+          // 使用现有的删除功能
+          deleteConversation(conversation.key)
+          message.success('会话已删除')
+        },
+      },
+    ],
+  })
+
   return (
     <div className={styles.layout}>
+      {/* 重命名模态框 */}
+      <Modal
+        title="重命名会话"
+        open={isRenameModalVisible}
+        onOk={handleRenameConfirm}
+        onCancel={handleRenameCancel}
+        okText="确定"
+        cancelText="取消"
+      >
+        <Input 
+          placeholder="请输入会话名称"
+          value={newConversationName}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewConversationName(e.target.value)}
+          onPressEnter={handleRenameConfirm}
+          autoFocus
+        />
+      </Modal>
+
       <div className={styles.menu}>
         <Logo />
         <div className={styles.menuButtons}>
@@ -506,164 +755,37 @@ const Independent: React.FC = () => {
           className={styles.conversations}
           activeKey={activeKey}
           onActiveChange={onConversationClick}
-          itemExtra={renderItemExtra}
+          menu={menuConfig}
         />
       </div>
       <div className={styles.chat}>
         <div className={styles.instructions}>
           <p className='m-0'>将DeepSeek R1满血版的思维链用于 GPT4.5 的推理。</p>
           <div>
-            <Button icon={<ShareAltOutlined />} onClick={handleShare} style={{ marginRight: 8 }} />
-            <Button 
-              icon={<GithubOutlined />} 
-              onClick={() => window.open('https://github.com/yi-ge/deep-gpt4.5', '_blank')}
+            <Button
+              icon={<ShareAltOutlined />}
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.href)
+                message.success('链接已复制到剪贴板')
+              }}
+              style={{ marginRight: 8 }}
+            />
+            <Button
+              icon={<GithubOutlined />}
+              onClick={() =>
+                window.open('https://github.com/yi-ge/deep-gpt4.5', '_blank')
+              }
             />
           </div>
         </div>
 
-        {/* 聊天消息区域包含删除功能 */}
+        {/* 聊天消息区域 */}
         <div className={styles.messagesContainer}>
           <Bubble.List
             items={items}
             roles={roles as any} // 类型问题无法解决，保持使用any
             className={styles.messages}
           />
-
-          {/* 删除按钮覆盖层 */}
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              pointerEvents: 'none',
-            }}
-          >
-            {items.map((item, index) => {
-              // 判断是否是当前悬停的消息
-              const isHovered = hoveredMessage === item.key
-
-              // 找到对应的完整消息对象（包含时间戳）
-              const fullMessage = messages.find((m) => m.id === item.key)
-
-              // 安全处理时间戳
-              let formattedTime = ''
-              try {
-                const timestamp = fullMessage?.timestamp
-                if (timestamp) {
-                  // 如果是字符串，转换为Date对象
-                  const date =
-                    typeof timestamp === 'string'
-                      ? new Date(timestamp)
-                      : timestamp
-                  formattedTime = `${date.toLocaleDateString()} ${date.toLocaleTimeString(
-                    [],
-                    { hour: '2-digit', minute: '2-digit' }
-                  )}`
-                }
-              } catch (e) {
-                console.error('时间格式化出错:', e)
-              }
-
-              // 计算每个消息的大致位置和高度
-              const isUserMessage = item.role === 'local'
-              const messageHeight = Math.max(
-                52,
-                30 + (item.content.length / 50) * 20
-              ) // 根据内容长度估算高度
-              const top = index * messageHeight
-
-              return (
-                <div
-                  key={`overlay-${item.key}`}
-                  style={{
-                    position: 'absolute',
-                    top: `${top}px`,
-                    left: 0,
-                    right: 0,
-                    height: `${messageHeight}px`,
-                    pointerEvents: 'auto',
-                    background: 'transparent',
-                    transition: 'background 0.3s',
-                  }}
-                  onMouseEnter={() => setHoveredMessage(item.key)}
-                  onMouseLeave={() => setHoveredMessage(null)}
-                >
-                  {isHovered && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        bottom: '0px',
-                        left: 0,
-                        right: 0,
-                        display: 'flex',
-                        justifyContent: isUserMessage
-                          ? 'flex-end'
-                          : 'flex-start',
-                        padding: '0 16px 4px 16px',
-                      }}
-                    >
-                      {/* AI消息的时间和删除按钮 */}
-                      {!isUserMessage && (
-                        <>
-                          <Popconfirm
-                            title='确定要删除这条消息吗？'
-                            onConfirm={() => handleDeleteMessage(item.key)}
-                            okText='是'
-                            cancelText='否'
-                            placement='topLeft'
-                          >
-                            <Button
-                              type='text'
-                              size='small'
-                              icon={<DeleteOutlined />}
-                              className={styles.messageDeleteBtn}
-                            />
-                          </Popconfirm>
-
-                          {formattedTime && (
-                            <span
-                              style={{
-                                fontSize: '12px',
-                                color: 'rgba(0, 0, 0, 0.45)',
-                                marginLeft: '36px',
-                                marginTop: '32px',
-                                alignSelf: 'center',
-                                opacity: 0.7,
-                                pointerEvents: 'auto',
-                                background: 'transparent !important',
-                              }}
-                            >
-                              {formattedTime}
-                            </span>
-                          )}
-                        </>
-                      )}
-
-                      {/* 用户消息只有删除按钮 */}
-                      {isUserMessage && (
-                        <Popconfirm
-                          title='确定要删除这条消息吗？'
-                          onConfirm={() => handleDeleteMessage(item.key)}
-                          okText='是'
-                          cancelText='否'
-                          placement='topRight'
-                        >
-                          <Button
-                            type='text'
-                            size='small'
-                            icon={<DeleteOutlined />}
-                            className={styles.messageDeleteBtn}
-                          />
-                        </Popconfirm>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
         </div>
 
         <Sender
