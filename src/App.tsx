@@ -133,19 +133,22 @@ interface MessageWithTimestamp extends Message {
 }
 
 // 添加用于分栏显示的自定义渲染函数
-const renderSplitView = (r1Content: string, gpt45Content: string): string => {
+const renderSplitView = (r1Content: string, gpt45Content: string, r1Status?: string, gpt45Status?: string): string => {
+  const r1IsLoading = r1Status === 'loading';
+  const gpt45IsLoading = gpt45Status === 'loading';
+  
   return `
 <div class="split-view-container" style="display: flex; width: 100%; gap: 12px; margin-top: 10px; flex-wrap: wrap;">
   <div class="split-view-column" style="flex: 1; min-width: 280px; max-width: 100%; padding: 15px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">DeepSeek R1</div>
+    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">DeepSeek R1 ${r1IsLoading ? '<span style="color: #faad14; margin-left: 5px;">(加载中...)</span>' : ''}</div>
     <div class="split-view-content deepseek-content" style="overflow-wrap: break-word; word-break: break-word;">
-      <div class="markdown-safe-container">${md.render(r1Content)}</div>
+      <div class="markdown-safe-container">${r1IsLoading ? '<div style="color: #888;">正在加载回复...</div>' : md.render(r1Content)}</div>
     </div>
   </div>
   <div class="split-view-column" style="flex: 1; min-width: 280px; max-width: 100%; padding: 15px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">GPT-4.5</div>
+    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">GPT-4.5 ${gpt45IsLoading ? '<span style="color: #faad14; margin-left: 5px;">(加载中...)</span>' : ''}</div>
     <div class="split-view-content gpt45-content" style="overflow-wrap: break-word; word-break: break-word;">
-      <div class="markdown-safe-container">${md.render(gpt45Content)}</div>
+      <div class="markdown-safe-container">${gpt45IsLoading ? '<div style="color: #888;">正在加载回复...</div>' : md.render(gpt45Content)}</div>
     </div>
   </div>
 </div>`.trim();
@@ -265,7 +268,22 @@ const Independent: React.FC = () => {
 
   // 判断消息是否需要打字效果
   const shouldUseTypingEffect = (message: MessageWithTimestamp): { step: number; interval: number; } | undefined => {
-    // 只有streaming状态的消息需要打字效果
+    // 用户消息不需要打字效果
+    if (message.status === 'local') {
+      return undefined;
+    }
+    
+    // 根据当前选择的模型类型决定是否使用打字效果
+    if (message.activeModel === 'deepseek-r1') {
+      return message.deepseekR1Status === 'streaming' ? { step: 5, interval: 20 } : undefined;
+    } else if (message.activeModel === 'gpt4.5') {
+      return message.gpt45Status === 'streaming' ? { step: 5, interval: 20 } : undefined;
+    } else if (message.activeModel === 'split') {
+      // 分栏模式下不使用打字效果，因为会分别在各自的区域显示
+      return undefined;
+    }
+    
+    // 默认情况
     return message.status === 'streaming' ? { step: 5, interval: 20 } : undefined;
   }
 
@@ -578,7 +596,6 @@ const Independent: React.FC = () => {
     let thinkingComplete = false
     let consecutiveContentWithoutReasoning = 0 // 连续接收不含reasoning_content的次数
     let hasReceivedReasoningBefore = false // 是否曾接收过reasoning_content
-    let totalReasoningTokens = 0 // 追踪思维链总Token数
 
     // 请求GPT-4.5的函数封装，确保只调用一次
     const requestGPT45Once = (
@@ -601,21 +618,6 @@ const Independent: React.FC = () => {
           thinkingTime
         )
       }
-    }
-
-    // 分析思维链完整性
-    const checkThinkingCompletion = (thinking: string) => {
-      // 检查思维链是否包含一定的结构特征表明它已经相对完整
-      const hasConclusion =
-        thinking.includes('总结') ||
-        thinking.includes('结论') ||
-        thinking.includes('因此') ||
-        thinking.includes('所以')
-
-      // 思维链足够长，且具有结构化特征
-      return (
-        thinking.length > 300 && (hasConclusion || totalReasoningTokens > 150)
-      )
     }
 
     try {
@@ -713,38 +715,22 @@ const Independent: React.FC = () => {
                 if (data.choices && data.choices[0]) {
                   const choice = data.choices[0]
                   const hasReasoningContent =
-                    choice.delta && choice.delta.reasoning_content !== undefined
+                    choice.delta && (choice.delta.reasoning_content !== null || choice.delta.reasoning_content !== undefined)
                   const hasContent =
-                    choice.delta && choice.delta.content !== undefined
+                    choice.delta && (choice.delta.content !== undefined || choice.delta.content !== null)
 
                   // 如果收到了reasoning_content，更新计数器
                   if (hasReasoningContent) {
                     hasReceivedReasoningBefore = true
                     consecutiveContentWithoutReasoning = 0
-                    totalReasoningTokens += 1 // 粗略估计token数
-
-                    // 当思维链足够丰富且有结论迹象，可以提前启动GPT-4.5
-                    if (
-                      !gpt45Requested &&
-                      !thinkingComplete &&
-                      thinking.length > 100 &&
-                      checkThinkingCompletion(thinking)
-                    ) {
-                      console.log('检测到思维链有结论，提前开始请求GPT-4.5')
-                      thinkingComplete = true
-                      const thinkingTime = Math.round(
-                        (Date.now() - thinkingStartTime) / 1000
-                      )
-                      requestGPT45Once(result, thinking, thinkingTime)
-                    }
                   }
                   // 如果之前收到过思维链内容，但现在连续收到普通内容
                   else if (hasReceivedReasoningBefore && hasContent) {
                     consecutiveContentWithoutReasoning++
 
-                    // 连续3次收到无思维链的普通内容，可以判定思维链部分已结束
+                    // 连续2次收到无思维链的普通内容，可以判定思维链部分已结束
                     if (
-                      consecutiveContentWithoutReasoning >= 3 &&
+                      consecutiveContentWithoutReasoning >= 2 &&
                       !thinkingComplete &&
                       !gpt45Requested &&
                       thinking.length > 0
@@ -761,7 +747,7 @@ const Independent: React.FC = () => {
                   }
 
                   // 处理提取delta内容并更新UI
-                  if (hasContent) {
+                  if (hasContent && choice.delta.content !== null) {
                     result += choice.delta.content
                     // 实时更新deepseek-r1的回复
                     setMessages((prev) =>
@@ -778,7 +764,7 @@ const Independent: React.FC = () => {
                   }
 
                   // 处理思维链
-                  if (hasReasoningContent) {
+                  if (hasReasoningContent && choice.delta.reasoning_content !== null && choice.delta.reasoning_content !== undefined) {
                     thinking += choice.delta.reasoning_content
                     // 实时更新思维链
                     setMessages((prev) =>
@@ -933,7 +919,7 @@ const Independent: React.FC = () => {
       // 构建带有思维链的用户消息
       let enhancedUserMessage = userMessage
       if (thinking) {
-        enhancedUserMessage = `${userMessage}\n\n 可参考以下思维过程（注意，思维过程仅供参考，并非最终答案，可能有误）：\n${thinking}`
+        enhancedUserMessage = `${userMessage}\n\n You may refer to the following thought process (Note: the thought process may contain errors and is for reference only, not the final answer):\n${thinking}`
       }
 
       // 更新思维链完成的状态和时间
@@ -958,16 +944,18 @@ const Independent: React.FC = () => {
         { role: 'user', content: enhancedUserMessage },
       ]
 
-      // 在开始请求前，先设置状态为streaming，提供更好的用户反馈
+      // 注意：不将状态设置为streaming，保持loading状态直到收到第一个token
+      // 仅为主消息准备空状态，但保持loading状态
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === aiMsgId
             ? {
                 ...msg,
-                status: 'streaming',
-                gpt45Status: 'streaming',
                 gpt45Message: '',
                 message: '', // 确保主消息也被清空，以准备打字机效果
+                // 保持loading状态，不设置为streaming
+                status: msg.status === 'loading' ? 'loading' : msg.status,
+                gpt45Status: 'loading',
               }
             : msg
         )
@@ -993,6 +981,7 @@ const Independent: React.FC = () => {
 
       // 初始化空结果
       let result = ''
+      let receivedFirstToken = false; // 标记是否收到第一个token
 
       // 使用fetch和ReadableStream处理
       const reader = response.body?.getReader()
@@ -1065,20 +1054,39 @@ const Independent: React.FC = () => {
                   const newContent = choice.delta.content
                   result += newContent
 
-                  // 实时更新UI - 确保每次更新都触发打字机效果
-                  setMessages((prev) =>
-                    prev.map((msg) =>
-                      msg.id === aiMsgId
-                        ? {
+                  // 检查是否是第一个token，并更新状态从loading到streaming
+                  if (!receivedFirstToken) {
+                    receivedFirstToken = true
+                    console.log('GPT-4.5收到第一个token，更新状态为streaming')
+                    
+                    // 更新状态为streaming
+                    setMessages((prev) => {
+                      return prev.map((msg) => {
+                        if (msg.id === aiMsgId) {
+                          return {
                             ...msg,
-                            message: result, // 设置主消息为GPT-4.5的结果
-                            status: 'streaming', // 保持streaming状态以激活打字机效果
-                            gpt45Message: result,
-                            gpt45Status: 'streaming',
-                          }
-                        : msg
-                    )
-                  )
+                            status: 'streaming',
+                            gpt45Status: 'streaming'
+                          };
+                        }
+                        return msg;
+                      });
+                    });
+                  }
+
+                  // 继续正常更新消息内容
+                  setMessages((prev) => {
+                    return prev.map((msg) => {
+                      if (msg.id === aiMsgId) {
+                        return {
+                          ...msg,
+                          message: result,
+                          gpt45Message: result
+                        };
+                      }
+                      return msg;
+                    });
+                  });
                 }
 
                 // 处理结束原因
@@ -1336,13 +1344,15 @@ const Independent: React.FC = () => {
                       }
                       size='small'
                       onClick={() => {
-                        setMessages((prev) =>
-                          prev.map((msg) =>
-                            msg.id === message.id
-                              ? { ...msg, activeModel: 'deepseek-r1' }
-                              : msg
-                          )
-                        )
+                        const newMessages = [...messages];
+                        const msgIndex = newMessages.findIndex(m => m.id === message.id);
+                        if (msgIndex !== -1) {
+                          newMessages[msgIndex] = {
+                            ...newMessages[msgIndex],
+                            activeModel: 'deepseek-r1'
+                          };
+                          setMessages(newMessages);
+                        }
                       }}
                     >
                       R1
@@ -1355,13 +1365,15 @@ const Independent: React.FC = () => {
                       }
                       size='small'
                       onClick={() => {
-                        setMessages((prev) =>
-                          prev.map((msg) =>
-                            msg.id === message.id
-                              ? { ...msg, activeModel: 'gpt4.5' }
-                              : msg
-                          )
-                        )
+                        const newMessages = [...messages];
+                        const msgIndex = newMessages.findIndex(m => m.id === message.id);
+                        if (msgIndex !== -1) {
+                          newMessages[msgIndex] = {
+                            ...newMessages[msgIndex],
+                            activeModel: 'gpt4.5'
+                          };
+                          setMessages(newMessages);
+                        }
                       }}
                     >
                       4.5
@@ -1374,13 +1386,15 @@ const Independent: React.FC = () => {
                       }
                       size='small'
                       onClick={() => {
-                        setMessages((prev) =>
-                          prev.map((msg) =>
-                            msg.id === message.id
-                              ? { ...msg, activeModel: 'split' }
-                              : msg
-                          )
-                        )
+                        const newMessages = [...messages];
+                        const msgIndex = newMessages.findIndex(m => m.id === message.id);
+                        if (msgIndex !== -1) {
+                          newMessages[msgIndex] = {
+                            ...newMessages[msgIndex],
+                            activeModel: 'split'
+                          };
+                          setMessages(newMessages);
+                        }
                       }}
                     >
                       对比
@@ -1445,14 +1459,27 @@ const Independent: React.FC = () => {
         // 如果是分栏显示，创建安全的HTML结构
         if (message.deepseekR1Message && message.gpt45Message) {
           // 使用专门的分栏渲染函数
-          displayContent = renderSplitView(message.deepseekR1Message, message.gpt45Message);
+          displayContent = renderSplitView(message.deepseekR1Message, message.gpt45Message, message.deepseekR1Status, message.gpt45Status);
         }
+      }
+    }
+
+    // 根据当前选择的模型类型决定loading状态
+    let isLoading = message.status === 'loading';
+    if (message.status !== 'local') {
+      if (message.activeModel === 'deepseek-r1') {
+        isLoading = message.deepseekR1Status === 'loading';
+      } else if (message.activeModel === 'gpt4.5') {
+        isLoading = message.gpt45Status === 'loading';
+      } else if (message.activeModel === 'split') {
+        // 对比模式的loading状态在renderSplitView中处理
+        isLoading = false;
       }
     }
 
     const item: BubbleItem = {
       key: message.id,
-      loading: message.status === 'loading',
+      loading: isLoading,
       role:
         message.status === 'local'
           ? 'local'
@@ -1611,8 +1638,8 @@ const Independent: React.FC = () => {
                   content: msg.message,
                   footer: createMessageFooter(
                     { key: msg.id } as BubbleItem,
-                    msg
-                  ),
+                      msg
+                    ),
                 }
                 processedItems.push(userItem)
               } else {
@@ -1680,7 +1707,7 @@ const Independent: React.FC = () => {
                   msg.gpt45Message
                 ) {
                   // 使用相同的分栏渲染函数，确保一致性
-                  displayContent = renderSplitView(msg.deepseekR1Message, msg.gpt45Message);
+                  displayContent = renderSplitView(msg.deepseekR1Message, msg.gpt45Message, msg.deepseekR1Status, msg.gpt45Status);
                 }
 
                 // 为AI回复创建气泡项
