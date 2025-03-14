@@ -754,10 +754,7 @@ const Independent: React.FC = () => {
                           : msg
                       )
                     )
-                  }
-
-                  // 处理提取delta内容并更新UI
-                  if (hasContent) {
+                  } else if (hasContent) {
                     if (!thinkingComplete) {
                       console.log(
                         '检测到思维链已完成，开始请求GPT-4.5'
