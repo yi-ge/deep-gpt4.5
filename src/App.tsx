@@ -165,7 +165,7 @@ const Independent: React.FC = () => {
   const [modelParams] = React.useState({
     model: 'gpt-4.5-preview',
     temperature: 0.7,
-    max_tokens: 1000,
+    max_tokens: 2048,
   })
 
   const [activeModelPreference, setActiveModelPreference] = useState<'deepseek-r1' | 'gpt4.5' | 'split'>('gpt4.5');
@@ -610,6 +610,7 @@ const Independent: React.FC = () => {
     // 创建闭包保存状态，避免linter错误
     let gpt45Requested = false
     let thinkingComplete = false
+    let continueR1Requested = false; // 标记是否已经发送R1继续请求
 
     // 请求GPT-4.5的函数封装，确保只调用一次
     const requestGPT45Once = (
@@ -639,258 +640,341 @@ const Independent: React.FC = () => {
       // 记录思考开始时间
       const thinkingStartTime = Date.now()
 
-      // 请求DeepSeek R1获取思维链
-      const response = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: chatMessages,
-          model: 'deepseek-r1', // 指定使用deepseek-r1模型
-          temperature: 0.7,
-          max_tokens: 1000,
-          reasoning: true, // 请求包含思维链(reasoning)
-        }),
-      })
+      // 发送DeepSeek R1请求的函数，支持初始请求和继续请求
+      const sendDeepseekR1Request = async (continueFrom = '') => {
+        // 如果是继续请求，需要修改消息结构
+        const requestMessages = continueFrom 
+          ? [...chatMessages, { 
+              role: 'assistant', 
+              content: continueFrom 
+            }, { 
+              role: 'user', 
+              content: 'continue' 
+            }] 
+          : chatMessages;
 
-      if (!response.ok) {
-        throw new Error('Deepseek-R1 API请求失败')
+        const response = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messages: requestMessages,
+            model: 'deepseek-r1', // 指定使用deepseek-r1模型
+            temperature: 0.7,
+            max_tokens: 2048,
+            reasoning: true, // 请求包含思维链(reasoning)
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error('Deepseek-R1 API请求失败')
+        }
+
+        return response;
       }
 
       // 初始化空结果
       let result = ''
       let thinking = ''
 
-      // 使用fetch和ReadableStream处理
-      const reader = response.body?.getReader()
-      if (!reader) {
-        throw new Error('No reader available')
-      }
+      // 处理DeepSeek R1响应的函数 - 支持初始和继续请求
+      const processDeepseekR1Response = async (response: Response, initialResult = '', initialThinking = '') => {
+        // 使用传入的初始值（用于继续请求时）
+        result = initialResult;
+        thinking = initialThinking;
 
-      const decoder = new TextDecoder('utf-8')
+        // 使用fetch和ReadableStream处理
+        const reader = response.body?.getReader()
+        if (!reader) {
+          throw new Error('No reader available')
+        }
 
-      // 递归读取流式响应
-      const readChunk = async () => {
-        try {
-          const { value, done } = await reader.read()
+        const decoder = new TextDecoder('utf-8')
 
-          if (done) {
-            console.log('deepseek-r1流结束')
-            // 计算思考总时间（秒）
-            const thinkingTime = Math.round(
-              (Date.now() - thinkingStartTime) / 1000
-            )
+        // 递归读取流式响应
+        const readChunk = async () => {
+          try {
+            const { value, done } = await reader.read()
 
-            // 更新思维链状态
+            if (done) {
+              console.log('deepseek-r1流结束')
+              // 计算思考总时间（秒）
+              const thinkingTime = Math.round(
+                (Date.now() - thinkingStartTime) / 1000
+              )
+
+              // 更新思维链状态
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMsgId
+                    ? {
+                        ...msg,
+                        thinking: thinking,
+                        thinkingStatus: 'success',
+                        thinkingTime: thinkingTime,
+                      }
+                    : msg
+                )
+              )
+
+              // 确保在流结束时GPT-4.5已被请求（如果之前未请求）
+              if (!gpt45Requested) {
+                console.log('流结束，尚未请求GPT-4.5，立即发起请求');
+                const thinkingTime = Math.round(
+                  (Date.now() - thinkingStartTime) / 1000
+                )
+                thinkingComplete = true;
+                requestGPT45Once(result, thinking, thinkingTime)
+              }
+              return
+            }
+
+            // 解码二进制数据为文本
+            const dataString = decoder.decode(value, { stream: true })
+
+            // 处理SSE格式数据
+            dataString
+              .toString()
+              .trim()
+              .split('data: ')
+              .forEach((line) => {
+                if (!line || line.trim() === '') return
+
+                const text = line.trim()
+
+                // 处理流结束标记
+                if (text === '[DONE]') {
+                  console.log('deepseek-r1 SSE流结束')
+                  return
+                }
+
+                try {
+                  // 解析JSON数据
+                  const data = JSON.parse(text)
+
+                  // 处理OpenAI格式响应
+                  if (data.choices && data.choices[0]) {
+                    const choice = data.choices[0]
+                    const hasReasoningContent =
+                      choice.delta && choice.delta.reasoning_content !== null && choice.delta.reasoning_content !== undefined
+                    const hasContent =
+                      choice.delta && choice.delta.content !== undefined && choice.delta.content !== null
+
+                    // 处理思维链
+                    if (hasReasoningContent) {
+                      thinking += choice.delta.reasoning_content
+                      // 实时更新思维链
+                      setMessages((prev) =>
+                        prev.map((msg) =>
+                          msg.id === aiMsgId
+                            ? {
+                                ...msg,
+                                thinking: thinking,
+                                thinkingStatus: 'streaming',
+                              }
+                            : msg
+                        )
+                      )
+                    } else if (hasContent) {
+                      // 在这里处理思维链完成的情况
+                      if (!thinkingComplete) {
+                        console.log(
+                          '检测到思维链已完成，开始请求GPT-4.5'
+                        )
+                        thinkingComplete = true
+                        const thinkingTime = Math.round(
+                          (Date.now() - thinkingStartTime) / 1000
+                        )
+                        // 立即请求GPT-4.5，不等待R1完成
+                        requestGPT45Once(result, thinking, thinkingTime)
+                      }
+
+                      result += choice.delta.content
+                      // 实时更新deepseek-r1的回复
+                      setMessages((prev) =>
+                        prev.map((msg) =>
+                          msg.id === aiMsgId
+                            ? {
+                                ...msg,
+                                deepseekR1Message: result,
+                                deepseekR1Status: 'streaming',
+                                // 如果当前是split模式，更新主消息状态为streaming和更新消息内容
+                                ...(msg.activeModel === 'split' ? {
+                                  status: 'streaming',
+                                  // 在split模式下，实时更新整个分栏视图
+                                  message: renderSplitView(result, msg.gpt45Message || '', 'streaming', msg.gpt45Status || 'loading')
+                                } : {})
+                              }
+                            : msg
+                        )
+                      )
+                    }
+
+                    // 如果接收到结束信号或达到长度限制，且有思维链内容，但还未请求GPT-4.5
+                    if (
+                      (choice.finish_reason === 'length' ||
+                        choice.finish_reason === 'stop') &&
+                      thinking.length > 0 &&
+                      !gpt45Requested
+                    ) {
+                      console.log(
+                        '思维链完成(收到finish信号)，开始请求GPT-4.5'
+                      )
+                      const thinkingTime = Math.round(
+                        (Date.now() - thinkingStartTime) / 1000
+                      )
+                      requestGPT45Once(result, thinking, thinkingTime)
+                    }
+
+                    // 处理达到最大长度限制的情况
+                    if (choice.finish_reason === 'length' && !continueR1Requested) {
+                      console.log('deepseek-r1达到最大长度限制，继续请求')
+                      continueR1Requested = true;
+                      
+                      // 显示一个加载状态提示
+                      const continuationText = "\n\n[正在获取更多内容...]";
+                      setMessages((prev) => {
+                        return prev.map((msg) => {
+                          if (msg.id === aiMsgId) {
+                            const updatedResult = result + continuationText;
+                            return {
+                              ...msg,
+                              deepseekR1Message: updatedResult,
+                              // 如果当前是split模式，更新主消息内容
+                              ...(msg.activeModel === 'split' ? {
+                                message: renderSplitView(updatedResult, msg.gpt45Message || '', 'streaming', msg.gpt45Status || 'loading')
+                              } : {})
+                            };
+                          }
+                          return msg;
+                        });
+                      });
+                      
+                      // 等待当前流完成
+                      reader.cancel(); // 取消当前流
+                      
+                      // 延迟一小段时间后继续请求
+                      setTimeout(async () => {
+                        try {
+                          // 发送继续请求
+                          const continueResponse = await sendDeepseekR1Request(result);
+                          // 处理继续请求的响应
+                          await processDeepseekR1Response(continueResponse, result, thinking);
+                        } catch (error) {
+                          console.error('DeepSeek R1继续请求错误:', error);
+                          // 更新消息以显示错误
+                          setMessages((prev) => {
+                            return prev.map((msg) => {
+                              if (msg.id === aiMsgId) {
+                                const errorMsg = result + "\n\n[继续请求失败: " + ((error as Error).message || '未知错误') + "]";
+                                return {
+                                  ...msg,
+                                  deepseekR1Message: errorMsg,
+                                  deepseekR1Status: 'error',
+                                  // 如果当前是split模式，更新主消息内容
+                                  ...(msg.activeModel === 'split' ? {
+                                    message: renderSplitView(errorMsg, msg.gpt45Message || '', 'error', msg.gpt45Status || 'loading')
+                                  } : {})
+                                };
+                              }
+                              return msg;
+                            });
+                          });
+                          
+                          // 即使DeepSeek R1出错，也尝试请求GPT-4.5（如果尚未请求）
+                          if (!gpt45Requested) {
+                            const thinkingTime = Math.round(
+                              (Date.now() - thinkingStartTime) / 1000
+                            )
+                            requestGPT45Once(result, thinking, thinkingTime)
+                          }
+                        }
+                      }, 500);
+                      
+                      return; // 中断当前的readChunk
+                    } else if (choice.finish_reason === 'stop') {
+                      console.log('deepseek-r1正常结束')
+                      setMessages((prev) =>
+                        prev.map((msg) =>
+                          msg.id === aiMsgId
+                            ? {
+                                ...msg,
+                                deepseekR1Message: result,
+                                deepseekR1Status: 'success',
+                                thinking: thinking,
+                                thinkingStatus: 'success',
+                              }
+                            : msg
+                        )
+                      )
+
+                      // 确保思维链完成但还未请求GPT-4.5的情况下进行请求
+                      if (!gpt45Requested) {
+                        console.log('流结束，尚未请求GPT-4.5，立即发起请求');
+                        const thinkingTime = Math.round(
+                          (Date.now() - thinkingStartTime) / 1000
+                        )
+                        thinkingComplete = true;
+                        requestGPT45Once(result, thinking, thinkingTime)
+                      }
+                    }
+                  }
+                  // 处理错误响应
+                  else if (data.error) {
+                    console.error('deepseek-r1 API错误响应:', data.error)
+                    setMessages((prev) =>
+                      prev.map((msg) =>
+                        msg.id === aiMsgId
+                          ? {
+                              ...msg,
+                              deepseekR1Message: `错误: ${
+                                data.error.message || 'API错误'
+                              }`,
+                              deepseekR1Status: 'error',
+                            }
+                          : msg
+                      )
+                    )
+                  }
+                } catch (parseError) {
+                  console.error('JSON解析错误:', parseError, '原始数据:', text)
+                }
+              })
+
+            // 继续读取下一个数据块
+            return readChunk()
+          } catch (readError) {
+            console.error('读取流错误:', readError)
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === aiMsgId
                   ? {
                       ...msg,
-                      thinking: thinking,
-                      thinkingStatus: 'success',
-                      thinkingTime: thinkingTime,
+                      deepseekR1Message: `错误: ${
+                        (readError as Error).message || '读取流错误'
+                      }`,
+                      deepseekR1Status: 'error',
                     }
                   : msg
               )
             )
 
-            // 确保在流结束时GPT-4.5已被请求（如果之前未请求）
-            if (!gpt45Requested) {
-              console.log('流结束，尚未请求GPT-4.5，立即发起请求');
-              const thinkingTime = Math.round(
-                (Date.now() - thinkingStartTime) / 1000
-              )
-              thinkingComplete = true;
-              requestGPT45Once(result, thinking, thinkingTime)
-            }
-            return
-          }
-
-          // 解码二进制数据为文本
-          const dataString = decoder.decode(value, { stream: true })
-
-          // 处理SSE格式数据
-          dataString
-            .toString()
-            .trim()
-            .split('data: ')
-            .forEach((line) => {
-              if (!line || line.trim() === '') return
-
-              const text = line.trim()
-
-              // 处理流结束标记
-              if (text === '[DONE]') {
-                console.log('deepseek-r1 SSE流结束')
-                return
-              }
-
-              try {
-                // 解析JSON数据
-                const data = JSON.parse(text)
-
-                // 处理OpenAI格式响应
-                if (data.choices && data.choices[0]) {
-                  const choice = data.choices[0]
-                  const hasReasoningContent =
-                    choice.delta && choice.delta.reasoning_content !== null && choice.delta.reasoning_content !== undefined
-                  const hasContent =
-                    choice.delta && choice.delta.content !== undefined && choice.delta.content !== null
-
-                  // 处理思维链
-                  if (hasReasoningContent) {
-                    thinking += choice.delta.reasoning_content
-                    // 实时更新思维链
-                    setMessages((prev) =>
-                      prev.map((msg) =>
-                        msg.id === aiMsgId
-                          ? {
-                              ...msg,
-                              thinking: thinking,
-                              thinkingStatus: 'streaming',
-                            }
-                          : msg
-                      )
-                    )
-                  } else if (hasContent) {
-                    if (!thinkingComplete) {
-                      console.log(
-                        '检测到思维链已完成，开始请求GPT-4.5'
-                      )
-                      thinkingComplete = true
-                      const thinkingTime = Math.round(
-                        (Date.now() - thinkingStartTime) / 1000
-                      )
-                      // 立即请求GPT-4.5，不等待R1完成
-                      requestGPT45Once(result, thinking, thinkingTime)
-                    }
-
-                    result += choice.delta.content
-                    // 实时更新deepseek-r1的回复
-                    setMessages((prev) =>
-                      prev.map((msg) =>
-                        msg.id === aiMsgId
-                          ? {
-                              ...msg,
-                              deepseekR1Message: result,
-                              deepseekR1Status: 'streaming',
-                              // 如果当前是split模式，更新主消息状态为streaming和更新消息内容
-                              ...(msg.activeModel === 'split' ? {
-                                status: 'streaming',
-                                // 在split模式下，实时更新整个分栏视图
-                                message: renderSplitView(result, msg.gpt45Message || '', 'streaming', msg.gpt45Status || 'loading')
-                              } : {})
-                            }
-                          : msg
-                      )
-                    )
-                  }
-
-                  // 如果接收到结束信号或达到长度限制，且有思维链内容，但还未请求GPT-4.5
-                  if (
-                    (choice.finish_reason === 'length' ||
-                      choice.finish_reason === 'stop') &&
-                    thinking.length > 0 &&
-                    !gpt45Requested
-                  ) {
-                    console.log(
-                      '思维链完成(收到finish信号)，开始请求GPT-4.5'
-                    )
-                    const thinkingTime = Math.round(
-                      (Date.now() - thinkingStartTime) / 1000
-                    )
-                    requestGPT45Once(result, thinking, thinkingTime)
-                  }
-
-                  // 处理结束原因
-                  if (
-                    choice.finish_reason === 'length' ||
-                    choice.finish_reason === 'stop'
-                  ) {
-                    console.log(
-                      `deepseek-r1${
-                        choice.finish_reason === 'length'
-                          ? '达到最大长度限制'
-                          : '正常结束'
-                      }`
-                    )
-                    setMessages((prev) =>
-                      prev.map((msg) =>
-                        msg.id === aiMsgId
-                          ? {
-                              ...msg,
-                              deepseekR1Message: result,
-                              deepseekR1Status: 'success',
-                              thinking: thinking,
-                              thinkingStatus: 'success',
-                            }
-                          : msg
-                      )
-                    )
-
-                    // 确保思维链完成但还未请求GPT-4.5的情况下进行请求
-                    if (!gpt45Requested) {
-                      console.log('流结束，尚未请求GPT-4.5，立即发起请求');
-                      const thinkingTime = Math.round(
-                        (Date.now() - thinkingStartTime) / 1000
-                      )
-                      thinkingComplete = true;
-                      requestGPT45Once(result, thinking, thinkingTime)
-                    }
-                  }
-                }
-                // 处理错误响应
-                else if (data.error) {
-                  console.error('deepseek-r1 API错误响应:', data.error)
-                  setMessages((prev) =>
-                    prev.map((msg) =>
-                      msg.id === aiMsgId
-                        ? {
-                            ...msg,
-                            deepseekR1Message: `错误: ${
-                              data.error.message || 'API错误'
-                            }`,
-                            deepseekR1Status: 'error',
-                          }
-                        : msg
-                    )
-                  )
-                }
-              } catch (parseError) {
-                console.error('JSON解析错误:', parseError, '原始数据:', text)
-              }
-            })
-
-          // 继续读取下一个数据块
-          return readChunk()
-        } catch (readError) {
-          console.error('读取流错误:', readError)
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === aiMsgId
-                ? {
-                    ...msg,
-                    deepseekR1Message: `错误: ${
-                      (readError as Error).message || '读取流错误'
-                    }`,
-                    deepseekR1Status: 'error',
-                  }
-                : msg
+            // 即使出错也完成思维链流程并请求GPT-4.5
+            const thinkingTime = Math.round(
+              (Date.now() - thinkingStartTime) / 1000
             )
-          )
-
-          // 即使出错也完成思维链流程并请求GPT-4.5
-          const thinkingTime = Math.round(
-            (Date.now() - thinkingStartTime) / 1000
-          )
-          requestGPT45Once(result, thinking, thinkingTime)
+            requestGPT45Once(result, thinking, thinkingTime)
+          }
         }
+
+        // 开始读取流
+        await readChunk()
       }
 
-      // 开始读取流
-      await readChunk()
+      // 发送初始请求并处理响应
+      const initialResponse = await sendDeepseekR1Request();
+      await processDeepseekR1Response(initialResponse);
     } catch (error) {
       console.error('deepseek-r1错误:', error)
       // 更新状态显示错误
@@ -981,111 +1065,153 @@ const Independent: React.FC = () => {
         )
       )
 
-      const response = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: enhancedChatMessages,
-          model: 'gpt-4.5-preview', // 指定使用GPT-4.5模型
-          temperature: 0.7,
-          max_tokens: 1000,
-          stream: true, // 确保启用流式响应
-        }),
-      })
+      // 发送GPT-4.5请求的函数，支持初始请求和继续请求
+      const sendGPT45Request = async (continueFrom = '') => {
+        // 如果是继续请求，需要修改消息结构
+        const requestMessages = continueFrom 
+          ? [...enhancedChatMessages, { 
+              role: 'assistant', 
+              content: continueFrom 
+            }, { 
+              role: 'user', 
+              content: 'continue' 
+            }] 
+          : enhancedChatMessages;
 
-      if (!response.ok) {
-        throw new Error('GPT-4.5 API请求失败')
-      }
+        const response = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messages: requestMessages,
+            model: 'gpt-4.5-preview', // 指定使用GPT-4.5模型
+            temperature: 0.7,
+            max_tokens: 2048,
+            stream: true, // 确保启用流式响应
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('GPT-4.5 API请求失败');
+        }
+
+        return response;
+      };
 
       // 初始化空结果
-      let result = ''
+      let result = '';
       let receivedFirstToken = false; // 标记是否收到第一个token
+      let continueRequested = false; // 标记是否已请求继续
 
-      // 使用fetch和ReadableStream处理
-      const reader = response.body?.getReader()
-      if (!reader) {
-        throw new Error('No reader available')
-      }
+      // 处理GPT-4.5响应的函数 - 支持初始和继续请求
+      const processGPT45Response = async (response: Response, initialResult = '') => {
+        // 使用传入的初始结果（用于继续请求时）
+        result = initialResult;
 
-      const decoder = new TextDecoder('utf-8')
+        // 使用fetch和ReadableStream处理
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('No reader available');
+        }
 
-      // 递归读取流式响应
-      const readChunk = async () => {
-        try {
-          const { value, done } = await reader.read()
+        const decoder = new TextDecoder('utf-8');
 
-          if (done) {
-            console.log('GPT-4.5流结束')
-            // 完成处理
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === aiMsgId
-                  ? {
-                      ...msg,
-                      message: result, // 设置主消息为GPT-4.5的结果
-                      status: 'success',
-                      gpt45Message: result,
-                      gpt45Status: 'success',
+        // 递归读取流式响应
+        const readChunk = async () => {
+          try {
+            const { value, done } = await reader.read();
+
+            if (done) {
+              console.log('GPT-4.5流结束');
+              // 完成处理
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMsgId
+                    ? {
+                        ...msg,
+                        message: result, // 设置主消息为GPT-4.5的结果
+                        status: 'success',
+                        gpt45Message: result,
+                        gpt45Status: 'success',
+                      }
+                    : msg
+                )
+              );
+
+              // 如果是第一条消息，生成标题
+              if (isFirstMessage) {
+                setTimeout(() => {
+                  generateTitle([
+                    ...chatMessages,
+                    { role: 'assistant', content: result },
+                  ]);
+                }, 1000);
+              }
+              return;
+            }
+
+            // 解码二进制数据为文本
+            const dataString = decoder.decode(value, { stream: true });
+
+            // 处理SSE格式数据
+            const chunks = dataString.toString().trim().split('data: ');
+            for (const line of chunks) {
+              if (!line || line.trim() === '') continue;
+
+              const text = line.trim();
+
+              // 处理流结束标记
+              if (text === '[DONE]') {
+                console.log('GPT-4.5 SSE流结束');
+                continue;
+              }
+
+              try {
+                // 解析JSON数据
+                const data = JSON.parse(text);
+
+                // 处理OpenAI格式响应
+                if (data.choices && data.choices[0]) {
+                  const choice = data.choices[0];
+
+                  // 处理提取delta内容并更新UI
+                  if (choice.delta && choice.delta.content !== undefined) {
+                    const newContent = choice.delta.content;
+                    result += newContent;
+
+                    // 检查是否是第一个token，并更新状态从loading到streaming
+                    if (!receivedFirstToken) {
+                      receivedFirstToken = true;
+                      console.log('GPT-4.5收到第一个token，更新状态为streaming');
+                      
+                      // 更新状态为streaming
+                      setMessages((prev) => {
+                        return prev.map((msg) => {
+                          if (msg.id === aiMsgId) {
+                            return {
+                              ...msg,
+                              status: 'streaming',
+                              gpt45Status: 'streaming'
+                            };
+                          }
+                          return msg;
+                        });
+                      });
                     }
-                  : msg
-              )
-            )
 
-            // 如果是第一条消息，生成标题
-            if (isFirstMessage) {
-              setTimeout(() => {
-                generateTitle([
-                  ...chatMessages,
-                  { role: 'assistant', content: result },
-                ])
-              }, 1000)
-            }
-            return
-          }
-
-          // 解码二进制数据为文本
-          const dataString = decoder.decode(value, { stream: true })
-
-          // 处理SSE格式数据
-          const chunks = dataString.toString().trim().split('data: ')
-          for (const line of chunks) {
-            if (!line || line.trim() === '') continue
-
-            const text = line.trim()
-
-            // 处理流结束标记
-            if (text === '[DONE]') {
-              console.log('GPT-4.5 SSE流结束')
-              continue
-            }
-
-            try {
-              // 解析JSON数据
-              const data = JSON.parse(text)
-
-              // 处理OpenAI格式响应
-              if (data.choices && data.choices[0]) {
-                const choice = data.choices[0]
-
-                // 处理提取delta内容并更新UI
-                if (choice.delta && choice.delta.content !== undefined) {
-                  const newContent = choice.delta.content
-                  result += newContent
-
-                  // 检查是否是第一个token，并更新状态从loading到streaming
-                  if (!receivedFirstToken) {
-                    receivedFirstToken = true
-                    console.log('GPT-4.5收到第一个token，更新状态为streaming')
-                    
-                    // 更新状态为streaming
+                    // 继续正常更新消息内容
                     setMessages((prev) => {
                       return prev.map((msg) => {
                         if (msg.id === aiMsgId) {
                           return {
                             ...msg,
-                            status: 'streaming',
+                            message: msg.activeModel === 'split' 
+                              ? renderSplitView(msg.deepseekR1Message || '', result, msg.deepseekR1Status || 'success', 'streaming')
+                              : result,
+                            gpt45Message: result,
+                            // 保持streaming状态不变 - 尤其对split模式很重要
+                            status: msg.status === 'streaming' || msg.activeModel === 'split' ? 'streaming' : msg.status,
                             gpt45Status: 'streaming'
                           };
                         }
@@ -1094,106 +1220,162 @@ const Independent: React.FC = () => {
                     });
                   }
 
-                  // 继续正常更新消息内容
-                  setMessages((prev) => {
-                    return prev.map((msg) => {
-                      if (msg.id === aiMsgId) {
-                        return {
-                          ...msg,
-                          message: msg.activeModel === 'split' 
-                            ? renderSplitView(msg.deepseekR1Message || '', result, msg.deepseekR1Status || 'success', 'streaming')
-                            : result,
-                          gpt45Message: result,
-                          // 保持streaming状态不变 - 尤其对split模式很重要
-                          status: msg.status === 'streaming' || msg.activeModel === 'split' ? 'streaming' : msg.status,
-                          gpt45Status: 'streaming'
-                        };
-                      }
-                      return msg;
-                    });
-                  });
-                }
-
-                // 处理结束原因
-                if (
-                  choice.finish_reason === 'length' ||
-                  choice.finish_reason === 'stop'
-                ) {
-                  console.log(
-                    `GPT-4.5${
-                      choice.finish_reason === 'length'
-                        ? '达到最大长度限制'
-                        : '正常结束'
-                    }`
-                  )
-
-                  // 注意：不要在这里设置status为success，让流完全结束时处理
-                }
-              }
-              // 处理错误响应
-              else if (data.error) {
-                console.error('GPT-4.5 API错误响应:', data.error)
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === aiMsgId
-                      ? {
-                          ...msg,
-                          gpt45Message: `错误: ${
-                            data.error.message || 'API错误'
-                          }`,
-                          gpt45Status: 'error',
-                          // 如果deepseek-r1成功了，就使用它的结果作为主消息
-                          message:
-                            msg.deepseekR1Status === 'success'
-                              ? msg.deepseekR1Message || ''
-                              : `错误: ${data.error.message || 'API错误'}`,
-                          status:
-                            msg.deepseekR1Status === 'success'
-                              ? 'success'
-                              : 'error',
+                  // 处理达到最大长度限制的情况
+                  if (choice.finish_reason === 'length' && !continueRequested) {
+                    console.log('GPT-4.5达到最大长度限制，继续请求');
+                    continueRequested = true;
+                    
+                    // 显示一个加载状态提示
+                    const continuationText = "\n\n[正在获取更多内容...]";
+                    setMessages((prev) => {
+                      return prev.map((msg) => {
+                        if (msg.id === aiMsgId) {
+                          const updatedResult = result + continuationText;
+                          return {
+                            ...msg,
+                            message: msg.activeModel === 'split' 
+                              ? renderSplitView(msg.deepseekR1Message || '', updatedResult, msg.deepseekR1Status || 'success', 'streaming')
+                              : updatedResult,
+                            gpt45Message: updatedResult,
+                          };
                         }
-                      : msg
-                  )
-                )
-              }
-            } catch (parseError) {
-              console.error('JSON解析错误:', parseError, '原始数据:', text)
-            }
-          }
-
-          // 继续读取下一个数据块
-          return readChunk()
-        } catch (readError) {
-          console.error('读取流错误:', readError)
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === aiMsgId
-                ? {
-                    ...msg,
-                    gpt45Message: `错误: ${
-                      (readError as Error).message || '读取流错误'
-                    }`,
-                    gpt45Status: 'error',
-                    // 如果deepseek-r1成功了，就使用它的结果作为主消息
-                    message:
-                      msg.deepseekR1Status === 'success'
-                        ? msg.deepseekR1Message || ''
-                        : `错误: ${
-                            (readError as Error).message || '读取流错误'
-                          }`,
-                    status:
-                      msg.deepseekR1Status === 'success' ? 'success' : 'error',
+                        return msg;
+                      });
+                    });
+                    
+                    // 等待当前流完成
+                    reader.cancel(); // 取消当前流
+                    
+                    // 延迟一小段时间后继续请求
+                    setTimeout(async () => {
+                      try {
+                        // 发送继续请求
+                        const continueResponse = await sendGPT45Request(result);
+                        // 处理继续请求的响应
+                        await processGPT45Response(continueResponse, result);
+                      } catch (error) {
+                        console.error('GPT-4.5继续请求错误:', error);
+                        // 更新消息以显示错误
+                        setMessages((prev) => {
+                          return prev.map((msg) => {
+                            if (msg.id === aiMsgId) {
+                              return {
+                                ...msg,
+                                message: msg.activeModel === 'split' 
+                                  ? renderSplitView(
+                                      msg.deepseekR1Message || '', 
+                                      result + "\n\n[继续请求失败: " + ((error as Error).message || '未知错误') + "]", 
+                                      msg.deepseekR1Status || 'success', 
+                                      'error'
+                                    )
+                                  : result + "\n\n[继续请求失败: " + ((error as Error).message || '未知错误') + "]",
+                                gpt45Message: result + "\n\n[继续请求失败: " + ((error as Error).message || '未知错误') + "]",
+                                gpt45Status: 'error'
+                              };
+                            }
+                            return msg;
+                          });
+                        });
+                      }
+                    }, 500);
+                    
+                    return; // 中断当前的readChunk
+                  } else if (choice.finish_reason === 'stop') {
+                    console.log('GPT-4.5正常结束');
+                    // 注意：不要在这里设置status为success，让流完全结束时处理
                   }
-                : msg
-            )
-          )
-        }
-      }
+                }
+                // 处理错误响应
+                else if (data.error) {
+                  console.error('GPT-4.5 API错误响应:', data.error);
+                  setMessages((prev) =>
+                    prev.map((msg) =>
+                      msg.id === aiMsgId
+                        ? {
+                            ...msg,
+                            gpt45Message: `错误: ${
+                              data.error.message || 'API错误'
+                            }`,
+                            gpt45Status: 'error',
+                            // 如果deepseek-r1成功了，就使用它的结果作为主消息
+                            message:
+                              msg.deepseekR1Status === 'success'
+                                ? msg.deepseekR1Message || ''
+                                : `错误: ${data.error.message || 'API错误'}`,
+                            status:
+                              msg.deepseekR1Status === 'success'
+                                ? 'success'
+                                : 'error',
+                          }
+                        : msg
+                    )
+                  );
+                }
+              } catch (parseError) {
+                console.error('JSON解析错误:', parseError, '原始数据:', text);
+              }
+            }
 
-      // 开始读取流
-      await readChunk()
+            // 继续读取下一个数据块
+            return readChunk();
+          } catch (readError) {
+            console.error('读取流错误:', readError);
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === aiMsgId
+                  ? {
+                      ...msg,
+                      gpt45Message: `错误: ${
+                        (readError as Error).message || '读取流错误'
+                      }`,
+                      gpt45Status: 'error',
+                      // 如果deepseek-r1成功了，就使用它的结果作为主消息
+                      message:
+                        msg.deepseekR1Status === 'success'
+                          ? msg.deepseekR1Message || ''
+                          : `错误: ${
+                              (readError as Error).message || '读取流错误'
+                            }`,
+                        status:
+                          msg.deepseekR1Status === 'success' ? 'success' : 'error',
+                    }
+                  : msg
+              )
+            );
+          }
+        };
+
+        // 开始读取流
+        await readChunk();
+      };
+
+      // 发送初始请求并处理响应
+      try {
+        const initialResponse = await sendGPT45Request();
+        await processGPT45Response(initialResponse);
+      } catch (error) {
+        console.error('GPT-4.5错误:', error);
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === aiMsgId
+              ? {
+                  ...msg,
+                  gpt45Message: `错误: ${(error as Error).message || 'API错误'}`,
+                  gpt45Status: 'error',
+                  // 如果deepseek-r1成功了，就使用它的结果作为主消息
+                  message:
+                    msg.deepseekR1Status === 'success'
+                      ? msg.deepseekR1Message || ''
+                      : `错误: ${(error as Error).message || 'API错误'}`,
+                  status:
+                    msg.deepseekR1Status === 'success' ? 'success' : 'error',
+                }
+              : msg
+          )
+        );
+      }
     } catch (error) {
-      console.error('GPT-4.5错误:', error)
+      console.error('GPT-4.5错误:', error);
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === aiMsgId
@@ -1211,9 +1393,9 @@ const Independent: React.FC = () => {
               }
             : msg
         )
-      )
+      );
     }
-  }
+  };
 
   useEffect(() => {
     const currentConversation = conversationsItems.find(

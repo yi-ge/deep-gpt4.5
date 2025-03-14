@@ -46,7 +46,7 @@ export async function* streamChatCompletion (
     const defaultOptions = {
       model: "gpt-4o-mini",
       temperature: 0.7,
-      max_tokens: 1000,
+      max_tokens: 2048,
       top_p: 1,
       frequency_penalty: 0,
       presence_penalty: 0,
