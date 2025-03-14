@@ -19,7 +19,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["@vercel/edge", "@types/node"]
+    "types": ["@vercel/edge"]
   },
   "include": ["vite.config.ts"],
   "exclude": ["node_modules"]

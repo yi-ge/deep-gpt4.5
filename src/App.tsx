@@ -923,7 +923,7 @@ const Independent: React.FC = () => {
     aiMsgId: string,
     chatMessages: Array<{ role: string; content: string }>,
     isFirstMessage: boolean,
-    deepseekResult: string,
+    _deepseekResult: string,
     thinking: string,
     thinkingTime: number = 0
   ) => {
@@ -1305,7 +1305,7 @@ const Independent: React.FC = () => {
 
   // 创建消息底部操作栏
   const createMessageFooter = (
-    item: BubbleItem,
+    _item: BubbleItem,
     message: MessageWithTimestamp
   ) => {
     // 格式化时间戳
