@@ -135,20 +135,22 @@ interface MessageWithTimestamp extends Message {
 // 添加用于分栏显示的自定义渲染函数
 const renderSplitView = (r1Content: string, gpt45Content: string, r1Status?: string, gpt45Status?: string): string => {
   const r1IsLoading = r1Status === 'loading';
+  const r1IsStreaming = r1Status === 'streaming';
   const gpt45IsLoading = gpt45Status === 'loading';
+  const gpt45IsStreaming = gpt45Status === 'streaming';
   
   return `
-<div class="split-view-container" style="display: flex; width: 100%; gap: 12px; margin-top: 10px; flex-wrap: wrap;">
-  <div class="split-view-column" style="flex: 1; min-width: 280px; max-width: 100%; padding: 15px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">DeepSeek R1 ${r1IsLoading ? '<span style="color: #faad14; margin-left: 5px;">(加载中...)</span>' : ''}</div>
+<div class="split-view-container">
+  <div class="split-view-column">
+    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">DeepSeek R1 ${r1IsLoading ? '<span style="color: #faad14; margin-left: 5px;">(加载中...)</span>' : r1IsStreaming ? '<span style="color: #52c41a; margin-left: 5px;">(生成中...)</span>' : ''}</div>
     <div class="split-view-content deepseek-content" style="overflow-wrap: break-word; word-break: break-word;">
-      <div class="markdown-safe-container">${r1IsLoading ? '<div style="color: #888;">正在加载回复...</div>' : md.render(r1Content)}</div>
+      <div class="markdown-safe-container">${r1IsLoading && !r1Content ? '<div style="color: #888;">正在加载回复...</div>' : md.render(r1Content || '')}</div>
     </div>
   </div>
-  <div class="split-view-column" style="flex: 1; min-width: 280px; max-width: 100%; padding: 15px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">GPT-4.5 ${gpt45IsLoading ? '<span style="color: #faad14; margin-left: 5px;">(加载中...)</span>' : ''}</div>
+  <div class="split-view-column">
+    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">GPT-4.5 ${gpt45IsLoading ? '<span style="color: #faad14; margin-left: 5px;">(加载中...)</span>' : gpt45IsStreaming ? '<span style="color: #52c41a; margin-left: 5px;">(生成中...)</span>' : ''}</div>
     <div class="split-view-content gpt45-content" style="overflow-wrap: break-word; word-break: break-word;">
-      <div class="markdown-safe-container">${gpt45IsLoading ? '<div style="color: #888;">正在加载回复...</div>' : md.render(gpt45Content)}</div>
+      <div class="markdown-safe-container">${gpt45IsLoading && !gpt45Content ? '<div style="color: #888;">正在加载回复...</div>' : md.render(gpt45Content || '')}</div>
     </div>
   </div>
 </div>`.trim();
@@ -166,8 +168,16 @@ const Independent: React.FC = () => {
     max_tokens: 1000,
   })
 
+  const [activeModelPreference, setActiveModelPreference] = useState<'deepseek-r1' | 'gpt4.5' | 'split'>('gpt4.5');
+
   // 添加自定义CSS样式到document中
   useEffect(() => {
+    // 从localStorage读取上次的模型偏好
+    const savedModelPreference = localStorage.getItem('activeModelPreference');
+    if (savedModelPreference) {
+      setActiveModelPreference(savedModelPreference as 'deepseek-r1' | 'gpt4.5' | 'split');
+    }
+
     // 创建style元素
     const styleElement = document.createElement('style');
     styleElement.textContent = `
@@ -177,12 +187,12 @@ const Independent: React.FC = () => {
         width: 100%;
         gap: 12px;
         margin-top: 10px;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
       }
       
       .split-view-column {
-        flex: 1;
-        min-width: 280px;
+        flex: 0 0 calc(50% - 6px);
+        width: calc(50% - 6px);
         padding: 15px;
         border: 1px solid #eee;
         border-radius: 8px;
@@ -220,12 +230,9 @@ const Independent: React.FC = () => {
       
       /* 移动设备适配 */
       @media (max-width: 768px) {
-        .split-view-container {
-          flex-direction: column;
-        }
-        
         .split-view-column {
-          min-width: 100%;
+          flex: 0 0 calc(50% - 6px);
+          width: calc(50% - 6px);
         }
       }
     `;
@@ -491,8 +498,8 @@ const Independent: React.FC = () => {
           message: '正在思考并准备回复...', // 添加加载过程中的描述文本
           status: 'loading',
           timestamp: new Date(),
-          // 初始化为GPT-4.5模型回复
-          activeModel: 'gpt4.5',
+          // 使用用户的偏好设置作为新消息的默认活动模型
+          activeModel: activeModelPreference,
           // 分别设置两个模型的加载状态
           deepseekR1Status: 'loading',
           gpt45Status: 'loading',
@@ -541,16 +548,25 @@ const Independent: React.FC = () => {
     }
 
     // 添加AI回复占位符，也带有时间戳
-    const aiMsgId = `msg_${Date.now() + 1}_${Math.random()
+    const aiMsgId = `msg_${Date.now()}_${Math.random()
       .toString(36)
       .substring(2, 9)}`
+      
+    // 准备初始消息内容 - 对于split模式立即使用分栏视图
+    let initialMessage = '正在思考并准备回复...'; 
+    
+    // 如果是分栏模式，使用分栏视图而不是加载文本
+    if (activeModelPreference === 'split') {
+      initialMessage = renderSplitView('', '', 'loading', 'loading');
+    }
+    
     const newAiMessage: MessageWithTimestamp = {
       id: aiMsgId,
-      message: '正在思考并准备回复...', // 添加加载过程中的描述文本
+      message: initialMessage, // 根据模式使用不同的初始内容
       status: 'loading',
-      timestamp: new Date(), // 添加当前时间
-      // 初始化为GPT-4.5模型回复
-      activeModel: 'gpt4.5',
+      timestamp: new Date(),
+      // 使用用户的偏好设置作为新消息的默认活动模型
+      activeModel: activeModelPreference,
       // 分别设置两个模型的加载状态
       deepseekR1Status: 'loading',
       gpt45Status: 'loading',
@@ -594,8 +610,6 @@ const Independent: React.FC = () => {
     // 创建闭包保存状态，避免linter错误
     let gpt45Requested = false
     let thinkingComplete = false
-    let consecutiveContentWithoutReasoning = 0 // 连续接收不含reasoning_content的次数
-    let hasReceivedReasoningBefore = false // 是否曾接收过reasoning_content
 
     // 请求GPT-4.5的函数封装，确保只调用一次
     const requestGPT45Once = (
@@ -608,6 +622,7 @@ const Independent: React.FC = () => {
         console.log(
           `请求GPT-4.5，思维链长度约${thinking.length}字符，用时${thinkingTime}秒`
         )
+        // 立即调用以避免延迟
         requestGPT45(
           userMessage,
           aiMsgId,
@@ -683,6 +698,11 @@ const Independent: React.FC = () => {
 
             // 确保在流结束时GPT-4.5已被请求（如果之前未请求）
             if (!gpt45Requested) {
+              console.log('流结束，尚未请求GPT-4.5，立即发起请求');
+              const thinkingTime = Math.round(
+                (Date.now() - thinkingStartTime) / 1000
+              )
+              thinkingComplete = true;
               requestGPT45Once(result, thinking, thinkingTime)
             }
             return
@@ -715,56 +735,12 @@ const Independent: React.FC = () => {
                 if (data.choices && data.choices[0]) {
                   const choice = data.choices[0]
                   const hasReasoningContent =
-                    choice.delta && (choice.delta.reasoning_content !== null || choice.delta.reasoning_content !== undefined)
+                    choice.delta && choice.delta.reasoning_content !== null && choice.delta.reasoning_content !== undefined
                   const hasContent =
-                    choice.delta && (choice.delta.content !== undefined || choice.delta.content !== null)
-
-                  // 如果收到了reasoning_content，更新计数器
-                  if (hasReasoningContent) {
-                    hasReceivedReasoningBefore = true
-                    consecutiveContentWithoutReasoning = 0
-                  }
-                  // 如果之前收到过思维链内容，但现在连续收到普通内容
-                  else if (hasReceivedReasoningBefore && hasContent) {
-                    consecutiveContentWithoutReasoning++
-
-                    // 连续2次收到无思维链的普通内容，可以判定思维链部分已结束
-                    if (
-                      consecutiveContentWithoutReasoning >= 2 &&
-                      !thinkingComplete &&
-                      !gpt45Requested &&
-                      thinking.length > 0
-                    ) {
-                      console.log(
-                        '检测到思维链已完成(连续无reasoning内容)，开始请求GPT-4.5'
-                      )
-                      thinkingComplete = true
-                      const thinkingTime = Math.round(
-                        (Date.now() - thinkingStartTime) / 1000
-                      )
-                      requestGPT45Once(result, thinking, thinkingTime)
-                    }
-                  }
-
-                  // 处理提取delta内容并更新UI
-                  if (hasContent && choice.delta.content !== null) {
-                    result += choice.delta.content
-                    // 实时更新deepseek-r1的回复
-                    setMessages((prev) =>
-                      prev.map((msg) =>
-                        msg.id === aiMsgId
-                          ? {
-                              ...msg,
-                              deepseekR1Message: result,
-                              deepseekR1Status: 'streaming',
-                            }
-                          : msg
-                      )
-                    )
-                  }
+                    choice.delta && choice.delta.content !== undefined && choice.delta.content !== null
 
                   // 处理思维链
-                  if (hasReasoningContent && choice.delta.reasoning_content !== null && choice.delta.reasoning_content !== undefined) {
+                  if (hasReasoningContent) {
                     thinking += choice.delta.reasoning_content
                     // 实时更新思维链
                     setMessages((prev) =>
@@ -780,16 +756,50 @@ const Independent: React.FC = () => {
                     )
                   }
 
+                  // 处理提取delta内容并更新UI
+                  if (hasContent) {
+                    if (!thinkingComplete) {
+                      console.log(
+                        '检测到思维链已完成，开始请求GPT-4.5'
+                      )
+                      thinkingComplete = true
+                      const thinkingTime = Math.round(
+                        (Date.now() - thinkingStartTime) / 1000
+                      )
+                      // 立即请求GPT-4.5，不等待R1完成
+                      requestGPT45Once(result, thinking, thinkingTime)
+                    }
+
+                    result += choice.delta.content
+                    // 实时更新deepseek-r1的回复
+                    setMessages((prev) =>
+                      prev.map((msg) =>
+                        msg.id === aiMsgId
+                          ? {
+                              ...msg,
+                              deepseekR1Message: result,
+                              deepseekR1Status: 'streaming',
+                              // 如果当前是split模式，更新主消息状态为streaming和更新消息内容
+                              ...(msg.activeModel === 'split' ? {
+                                status: 'streaming',
+                                // 在split模式下，实时更新整个分栏视图
+                                message: renderSplitView(result, msg.gpt45Message || '', 'streaming', msg.gpt45Status || 'loading')
+                              } : {})
+                            }
+                          : msg
+                      )
+                    )
+                  }
+
                   // 如果接收到结束信号或达到长度限制，且有思维链内容，但还未请求GPT-4.5
                   if (
                     (choice.finish_reason === 'length' ||
                       choice.finish_reason === 'stop') &&
-                    hasReceivedReasoningBefore &&
                     thinking.length > 0 &&
                     !gpt45Requested
                   ) {
                     console.log(
-                      '思维链基本完成(收到finish信号)，开始请求GPT-4.5'
+                      '思维链完成(收到finish信号)，开始请求GPT-4.5'
                     )
                     const thinkingTime = Math.round(
                       (Date.now() - thinkingStartTime) / 1000
@@ -825,9 +835,11 @@ const Independent: React.FC = () => {
 
                     // 确保思维链完成但还未请求GPT-4.5的情况下进行请求
                     if (!gpt45Requested) {
+                      console.log('流结束，尚未请求GPT-4.5，立即发起请求');
                       const thinkingTime = Math.round(
                         (Date.now() - thinkingStartTime) / 1000
                       )
+                      thinkingComplete = true;
                       requestGPT45Once(result, thinking, thinkingTime)
                     }
                   }
@@ -951,10 +963,21 @@ const Independent: React.FC = () => {
           msg.id === aiMsgId
             ? {
                 ...msg,
-                gpt45Message: '',
-                message: '', // 确保主消息也被清空，以准备打字机效果
-                // 保持loading状态，不设置为streaming
-                status: msg.status === 'loading' ? 'loading' : msg.status,
+                gpt45Message: '', // 仅清空GPT-4.5的消息
+                // 在split模式下，保留主消息内容和streaming状态，但更新分栏视图
+                ...(msg.activeModel !== 'split' ? {
+                  message: '', // 仅在非split模式下清空主消息
+                  // 保持loading状态，不设置为streaming
+                  status: msg.status === 'loading' ? 'loading' : msg.status,
+                } : {
+                  // 在split模式下，更新分栏视图以显示GPT-4.5的加载状态
+                  message: renderSplitView(
+                    msg.deepseekR1Message || '', 
+                    '', 
+                    msg.deepseekR1Status || 'success', 
+                    'loading'
+                  )
+                }),
                 gpt45Status: 'loading',
               }
             : msg
@@ -1080,8 +1103,13 @@ const Independent: React.FC = () => {
                       if (msg.id === aiMsgId) {
                         return {
                           ...msg,
-                          message: result,
-                          gpt45Message: result
+                          message: msg.activeModel === 'split' 
+                            ? renderSplitView(msg.deepseekR1Message || '', result, msg.deepseekR1Status || 'success', 'streaming')
+                            : result,
+                          gpt45Message: result,
+                          // 保持streaming状态不变 - 尤其对split模式很重要
+                          status: msg.status === 'streaming' || msg.activeModel === 'split' ? 'streaming' : msg.status,
+                          gpt45Status: 'streaming'
                         };
                       }
                       return msg;
@@ -1352,6 +1380,9 @@ const Independent: React.FC = () => {
                             activeModel: 'deepseek-r1'
                           };
                           setMessages(newMessages);
+                          // 保存模型偏好到localStorage
+                          localStorage.setItem('activeModelPreference', 'deepseek-r1');
+                          setActiveModelPreference('deepseek-r1');
                         }
                       }}
                     >
@@ -1373,6 +1404,9 @@ const Independent: React.FC = () => {
                             activeModel: 'gpt4.5'
                           };
                           setMessages(newMessages);
+                          // 保存模型偏好到localStorage
+                          localStorage.setItem('activeModelPreference', 'gpt4.5');
+                          setActiveModelPreference('gpt4.5');
                         }
                       }}
                     >
@@ -1394,6 +1428,9 @@ const Independent: React.FC = () => {
                             activeModel: 'split'
                           };
                           setMessages(newMessages);
+                          // 保存模型偏好到localStorage
+                          localStorage.setItem('activeModelPreference', 'split');
+                          setActiveModelPreference('split');
                         }
                       }}
                     >
@@ -1457,10 +1494,13 @@ const Independent: React.FC = () => {
         displayContent = message.gpt45Message
       } else if (message.activeModel === 'split') {
         // 如果是分栏显示，创建安全的HTML结构
-        if (message.deepseekR1Message && message.gpt45Message) {
-          // 使用专门的分栏渲染函数
-          displayContent = renderSplitView(message.deepseekR1Message, message.gpt45Message, message.deepseekR1Status, message.gpt45Status);
-        }
+        // 只要是split模式就显示分栏视图，不再要求两个模型都有内容
+        displayContent = renderSplitView(
+          message.deepseekR1Message || '', 
+          message.gpt45Message || '', 
+          message.deepseekR1Status, 
+          message.gpt45Status
+        );
       }
     }
 
@@ -1472,7 +1512,8 @@ const Independent: React.FC = () => {
       } else if (message.activeModel === 'gpt4.5') {
         isLoading = message.gpt45Status === 'loading';
       } else if (message.activeModel === 'split') {
-        // 对比模式的loading状态在renderSplitView中处理
+        // 对比模式下，如果两个模型都在加载且没有内容，才显示loading状态
+        // 否则显示已有的内容，这样可以实现双模型同时流式更新
         isLoading = false;
       }
     }
@@ -1570,23 +1611,6 @@ const Independent: React.FC = () => {
           >
             新建对话
           </Button>
-          <Popconfirm
-            title='确定要删除所有会话吗？'
-            onConfirm={handleDeleteAll}
-            okText='是'
-            cancelText='否'
-          >
-            <Tooltip title='清空所有会话'>
-              <Button
-                type='link'
-                className={styles.clearBtn}
-                icon={<ClearOutlined />}
-                danger
-              >
-                清空会话
-              </Button>
-            </Tooltip>
-          </Popconfirm>
         </div>
         <Conversations
           items={conversationsItems}
@@ -1595,6 +1619,22 @@ const Independent: React.FC = () => {
           onActiveChange={onConversationClick}
           menu={menuConfig}
         />
+        <div className={styles.menuFooter}>
+          <Popconfirm
+            title='确定要删除所有会话吗？'
+            onConfirm={handleDeleteAll}
+            okText='是'
+            cancelText='否'
+          >
+            <Tooltip title='清空所有会话'>
+              <Button
+                type='text'
+                className={styles.clearBtn}
+                icon={<ClearOutlined />}
+              />
+            </Tooltip>
+          </Popconfirm>
+        </div>
       </div>
       <div className={styles.chat}>
         <div className={styles.instructions}>
@@ -1639,7 +1679,7 @@ const Independent: React.FC = () => {
                   footer: createMessageFooter(
                     { key: msg.id } as BubbleItem,
                       msg
-                    ),
+                    )
                 }
                 processedItems.push(userItem)
               } else {

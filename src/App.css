@@ -24,3 +24,6 @@
   visibility: visible;
 }
 
+.ant-bubble-content:has(.split-view-container) {
+  width: 100%;
+}

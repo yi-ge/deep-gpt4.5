@@ -57,6 +57,17 @@ export const useStyle = createStyles(({ token, css }) => {
         display: none;
       }
     `,
+    menuFooter: css`
+      padding: 12px;
+      margin-top: auto;
+      border-top: 1px solid ${token.colorBorder};
+      display: flex;
+      justify-content: center;
+      
+      @media (max-width: 768px) {
+        display: none;
+      }
+    `,
     conversationItemExtra: css`
       position: absolute;
       right: 12px;
@@ -179,10 +190,15 @@ export const useStyle = createStyles(({ token, css }) => {
       }
     `,
     clearBtn: css`
-      background: #ff40330f;
-      border: 1px solid #ff403334;
-      width: calc(100% - 24px);
-      margin: 0 12px 12px 12px;
+      opacity: 0.6;
+      width: auto;
+      margin: 0;
+      transition: opacity 0.3s;
+      
+      &:hover {
+        opacity: 1;
+        background: transparent;
+      }
 
       @media (max-width: 768px) {
         display: none;
