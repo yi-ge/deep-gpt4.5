@@ -41,6 +41,51 @@ const Independent: FC = () => {
 
   const [activeModelPreference, setActiveModelPreference] = useState<'deepseek-r1' | 'gpt4.5' | 'split'>('gpt4.5');
 
+  // 创建默认的模型配置对象
+  const defaultModelConfigs = {
+    'deepseek-r1': {
+      model: 'deepseek-r1',
+      temperature: 0.7,
+      max_tokens: 2048,
+      reasoning: true,
+    },
+    'gpt4.5': {
+      model: 'gpt-4.5-preview',
+      temperature: 0.7,
+      max_tokens: 2048,
+      stream: true,
+    }
+  };
+
+  // 创建通用的模型请求函数生成器
+  const createModelRequest = (
+    endpoint: string,
+    defaultConfig: Record<string, unknown>
+  ) => {
+    return async (
+      messages: Array<{ role: string; content: string }>,
+      customConfig?: Record<string, unknown>
+    ) => {
+      const config = { ...defaultConfig, ...(customConfig || {}) };
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages,
+          ...config,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`模型请求失败: ${(config.model as string) || '未知模型'}`);
+      }
+
+      return response;
+    };
+  };
+
   // 从localStorage读取上次的模型偏好
   useEffect(() => {
     const savedModelPreference = localStorage.getItem('activeModelPreference');
@@ -272,7 +317,8 @@ const Independent: FC = () => {
           prevUserMessage.message,
           aiMsgId,
           currentMessages,
-          false
+          false,
+          defaultModelConfigs['deepseek-r1']
         )
       }
     }
@@ -339,7 +385,13 @@ const Independent: FC = () => {
     const isFirstMessage = currentMessages.length === 0
 
     // 第一步：请求deepseek-r1模型获取思维链
-    requestDeepseekR1(nextContent, aiMsgId, chatMessages, isFirstMessage)
+    requestDeepseekR1(
+      nextContent, 
+      aiMsgId, 
+      chatMessages, 
+      isFirstMessage,
+      defaultModelConfigs['deepseek-r1']
+    )
 
     // 清空输入框
     setContent('')
@@ -350,12 +402,21 @@ const Independent: FC = () => {
     userMessage: string,
     aiMsgId: string,
     chatMessages: Array<{ role: string; content: string }>,
-    isFirstMessage: boolean
+    isFirstMessage: boolean,
+    modelConfig = {
+      model: 'deepseek-r1',
+      temperature: 0.7,
+      max_tokens: 2048,
+      reasoning: true
+    }
   ) => {
     // 创建闭包保存状态，避免linter错误
     let gpt45Requested = false
     let thinkingComplete = false
     let continueR1Requested = false; // 标记是否已经发送R1继续请求
+
+    // 创建DeepSeek R1请求函数
+    const makeR1Request = createModelRequest('/v1/chat/completions', modelConfig);
 
     // 请求GPT-4.5的函数封装，确保只调用一次
     const requestGPT45Once = (
@@ -376,7 +437,8 @@ const Independent: FC = () => {
           isFirstMessage,
           result,
           thinking,
-          thinkingTime
+          thinkingTime,
+          defaultModelConfigs['gpt4.5']
         )
       }
     }
@@ -398,25 +460,8 @@ const Independent: FC = () => {
             }] 
           : chatMessages;
 
-        const response = await fetch('/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messages: requestMessages,
-            model: 'deepseek-r1', // 指定使用deepseek-r1模型
-            temperature: 0.7,
-            max_tokens: 2048,
-            reasoning: true, // 请求包含思维链(reasoning)
-          }),
-        })
-
-        if (!response.ok) {
-          throw new Error('Deepseek-R1 API请求失败')
-        }
-
-        return response;
+        // 使用通用请求函数发送请求
+        return await makeR1Request(requestMessages);
       }
 
       // 初始化空结果
@@ -751,9 +796,18 @@ const Independent: FC = () => {
     isFirstMessage: boolean,
     _deepseekResult: string,
     thinking: string,
-    thinkingTime: number = 0
+    thinkingTime: number = 0,
+    modelConfig = {
+      model: 'gpt-4.5-preview',
+      temperature: 0.7,
+      max_tokens: 2048,
+      stream: true
+    }
   ) => {
     try {
+      // 创建GPT-4.5请求函数
+      const makeGPT45Request = createModelRequest('/v1/chat/completions', modelConfig);
+      
       // 构建带有思维链的用户消息
       let enhancedUserMessage = userMessage
       if (thinking) {
@@ -823,25 +877,8 @@ const Independent: FC = () => {
             }] 
           : enhancedChatMessages;
 
-        const response = await fetch('/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messages: requestMessages,
-            model: 'gpt-4.5-preview', // 指定使用GPT-4.5模型
-            temperature: 0.7,
-            max_tokens: 2048,
-            stream: true, // 确保启用流式响应
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error('GPT-4.5 API请求失败');
-        }
-
-        return response;
+        // 使用通用请求函数发送请求
+        return await makeGPT45Request(requestMessages);
       };
 
       // 初始化空结果
