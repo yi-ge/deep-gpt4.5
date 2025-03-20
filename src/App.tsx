@@ -4,6 +4,7 @@ import * as React from 'react'
 import { useEffect, useState } from 'react'
 import { messageStyles } from './styles/layout'
 import './App.css'
+import './styles/splitView.css' // 引入分栏视图样式
 
 import {
   PlusOutlined,
@@ -170,80 +171,12 @@ const Independent: React.FC = () => {
 
   const [activeModelPreference, setActiveModelPreference] = useState<'deepseek-r1' | 'gpt4.5' | 'split'>('gpt4.5');
 
-  // 添加自定义CSS样式到document中
+  // 从localStorage读取上次的模型偏好
   useEffect(() => {
-    // 从localStorage读取上次的模型偏好
     const savedModelPreference = localStorage.getItem('activeModelPreference');
     if (savedModelPreference) {
       setActiveModelPreference(savedModelPreference as 'deepseek-r1' | 'gpt4.5' | 'split');
     }
-
-    // 创建style元素
-    const styleElement = document.createElement('style');
-    styleElement.textContent = `
-      /* 分栏视图的样式 */
-      .split-view-container {
-        display: flex;
-        width: 100%;
-        gap: 12px;
-        margin-top: 10px;
-        flex-wrap: nowrap;
-      }
-      
-      .split-view-column {
-        flex: 0 0 calc(50% - 6px);
-        width: calc(50% - 6px);
-        padding: 15px;
-        border: 1px solid #eee;
-        border-radius: 8px;
-        margin-bottom: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        overflow: hidden;
-      }
-      
-      .split-view-content {
-        overflow-wrap: break-word;
-        word-break: break-word;
-      }
-      
-      .split-view-content img {
-        max-width: 100%;
-        height: auto;
-      }
-      
-      .split-view-content pre {
-        overflow-x: auto;
-        max-width: 100%;
-      }
-      
-      .split-view-content code {
-        white-space: pre-wrap;
-        word-wrap: break-word;
-      }
-      
-      /* 确保表格正确显示 */
-      .split-view-content table {
-        max-width: 100%;
-        display: block;
-        overflow-x: auto;
-      }
-      
-      /* 移动设备适配 */
-      @media (max-width: 768px) {
-        .split-view-column {
-          flex: 0 0 calc(50% - 6px);
-          width: calc(50% - 6px);
-        }
-      }
-    `;
-    
-    // 添加到document
-    document.head.appendChild(styleElement);
-    
-    // 清理函数
-    return () => {
-      document.head.removeChild(styleElement);
-    };
   }, []);
 
   const {
