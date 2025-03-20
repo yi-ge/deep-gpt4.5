@@ -6,8 +6,8 @@
       "dest": "/api/completions.ts"
     },
     {
-      "src": "/v1/generate-title",
-      "dest": "/api/generate-title.ts"
+      "src": "/v1/generateTitle",
+      "dest": "/api/generateTitle.ts"
     }
   ]
 }

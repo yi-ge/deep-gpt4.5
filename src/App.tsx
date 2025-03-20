@@ -32,6 +32,7 @@ import { useStyle } from './styles/layout'
 import Logo from './components/Logo'
 import { useConversations } from './hooks/useConversations'
 import { Message } from './types/conversation'
+import { generateTitle } from './apis/generateTitle'
 
 // 初始化markdown-it
 const md = markdownit({
@@ -241,33 +242,6 @@ const Independent: React.FC = () => {
   // 处理重命名取消
   const handleRenameCancel = () => {
     setIsRenameModalVisible(false)
-  }
-
-  // 生成标题的函数
-  const generateTitle = async (
-    messages: Array<{ role: string; content: string }>
-  ) => {
-    try {
-      const response = await fetch('/v1/generate-title', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ messages }),
-      })
-
-      if (!response.ok) {
-        console.error('标题生成请求失败')
-        return
-      }
-
-      const data = await response.json()
-      if (data.title) {
-        updateConversationTitle(activeKey, data.title)
-      }
-    } catch (error) {
-      console.error('生成标题出错:', error)
-    }
   }
 
   const [agent] = useXAgent<string>({
