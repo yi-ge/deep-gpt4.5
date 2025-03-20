@@ -54,6 +54,16 @@ export const useConversations = () => {
 
   const [activeKey, setActiveKey] = useState(conversationsItems[0].key)
 
+  // 添加对 activeKey 的监听，确保它始终指向一个有效的会话
+  useEffect(() => {
+    // 检查当前 activeKey 是否有效
+    const isValidKey = conversationsItems.some(item => item.key === activeKey)
+    if (!isValidKey && conversationsItems.length > 0) {
+      // 如果 activeKey 无效，切换到第一个会话
+      setActiveKey(conversationsItems[0].key)
+    }
+  }, [conversationsItems, activeKey])
+
   useEffect(() => {
     // 保存时序列化
     localStorage.setItem(STORAGE_KEY, serializeConversations(conversationsItems))
@@ -118,11 +128,12 @@ export const useConversations = () => {
       setConversationsItems([newConversation])
       setActiveKey(newKey)
     } else {
+      // 更新会话列表
+      setConversationsItems(filteredConversations)
       // 如果删除的是当前活动的会话，切换到列表中的第一个会话
       if (key === activeKey) {
         setActiveKey(filteredConversations[0].key)
       }
-      setConversationsItems(filteredConversations)
     }
   }
 
