@@ -1,4 +1,4 @@
-import { ChatMessage } from "../interfaces/ChatMessage"
+import { ChatMessage } from "../types/ChatMessage"
 
 // 生成标题的API
 export async function generateTitle (messages: ChatMessage[]): Promise<string | null> {

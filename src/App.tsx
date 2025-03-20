@@ -1,17 +1,12 @@
 import { Bubble, Conversations, Sender, useXAgent } from '@ant-design/x'
-import type { BubbleProps, ConversationsProps } from '@ant-design/x'
+import type { ConversationsProps } from '@ant-design/x'
 import * as React from 'react'
 import { useEffect, useState } from 'react'
 import { messageStyles } from './styles/layout'
-import './App.css'
-import './styles/splitView.css' // 引入分栏视图样式
-
 import {
   PlusOutlined,
-  ShareAltOutlined,
   DeleteOutlined,
   ClearOutlined,
-  GithubOutlined,
   CopyOutlined,
   SyncOutlined,
   EditOutlined,
@@ -19,144 +14,25 @@ import {
 import {
   Button,
   message,
-  Typography,
   Popconfirm,
   Tooltip,
   Modal,
   Input,
   Space,
 } from 'antd'
-import markdownit from 'markdown-it'
-
+import './App.css'
+import './styles/splitView.css'
 import { useStyle } from './styles/layout'
 import Logo from './components/Logo'
+import ShareLinks from './components/ShareLinks'
 import { useConversations } from './hooks/useConversations'
-import { Message } from './types/conversation'
 import { generateTitle } from './apis/generateTitle'
+import { BubbleItem } from './types/BubbleItem'
+import { MessageWithTimestamp } from './types/messageTypes'
+import { md, renderSplitView } from './libs/utils'
+import { roles } from './components/roles'
+import { shouldUseTypingEffect } from './libs/shouldUseTypingEffect'
 
-// 初始化markdown-it
-const md = markdownit({
-  html: true,
-  breaks: true,
-  linkify: true,
-  typographer: true,
-})
-
-// 定义Bubble.List需要的类型
-interface BubbleItem {
-  key: string | number
-  loading: boolean
-  role: string
-  content: string
-  footer?: React.ReactNode // 添加footer属性支持
-  header?: React.ReactNode // 添加header属性支持
-  typing?: { step: number; interval: number }
-  // 添加模型数据字段，以便创建不同的UI
-  data?: {
-    deepseekR1Message?: string
-    gpt45Message?: string
-    deepseekR1Status?: string
-    gpt45Status?: string
-    thinking?: string
-    thinkingStatus?: string
-    activeModel?: 'deepseek-r1' | 'gpt4.5' | 'split'
-    thinkingVisible?: boolean
-  }
-  style?: React.CSSProperties
-}
-
-interface RoleConfig {
-  placement: 'start' | 'end'
-  typing?: { step: number; interval: number }
-  styles?: { content: { borderRadius: number } }
-  variant?: string
-  messageRender?: BubbleProps['messageRender']
-}
-
-// 创建Markdown渲染函数
-const renderMarkdown: BubbleProps['messageRender'] = (content) => (
-  <Typography>
-    {/* dangerouslySetInnerHTML是React的特性，用于渲染HTML内容 */}
-    <div dangerouslySetInnerHTML={{ __html: md.render(content) }} />
-  </Typography>
-)
-
-// 定义深层类型，以修复类型错误
-type RolesType = Record<string, RoleConfig>
-
-const roles: RolesType = {
-  ai: {
-    placement: 'start',
-    // 移除默认的typing配置，将由消息内容动态决定是否需要typing效果
-    styles: {
-      content: {
-        borderRadius: 0,
-      },
-    },
-    variant: 'plain',
-    messageRender: renderMarkdown,
-  },
-  streaming: {
-    placement: 'start',
-    typing: { step: 8, interval: 15 }, // 加快打字机效果的速度
-    styles: {
-      content: {
-        borderRadius: 0,
-      },
-    },
-    variant: 'plain',
-    messageRender: renderMarkdown,
-  },
-  thinking: {
-    placement: 'start',
-    variant: 'plain',
-    messageRender: renderMarkdown,
-  },
-  local: {
-    placement: 'end',
-    variant: 'filled',
-    styles: {
-      content: {
-        borderRadius: 16,
-      },
-    },
-    messageRender: (content) => (
-      <Typography style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-        {content}
-      </Typography>
-    ),
-  },
-}
-
-// 扩展Message类型，添加时间戳
-interface MessageWithTimestamp extends Message {
-  timestamp?: Date
-  thinkingTime?: number // 添加思考用时字段
-}
-
-// 添加用于分栏显示的自定义渲染函数
-const renderSplitView = (r1Content: string, gpt45Content: string, r1Status?: string, gpt45Status?: string): string => {
-  const r1IsLoading = r1Status === 'loading';
-  const r1IsStreaming = r1Status === 'streaming';
-  const gpt45IsLoading = gpt45Status === 'loading';
-  const gpt45IsStreaming = gpt45Status === 'streaming';
-  
-  return `
-<div class="split-view-container">
-  <div class="split-view-column">
-    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">DeepSeek R1 ${r1IsLoading ? '<span style="color: #faad14; margin-left: 5px;">(加载中...)</span>' : r1IsStreaming ? '<span style="color: #52c41a; margin-left: 5px;">(生成中...)</span>' : ''}</div>
-    <div class="split-view-content deepseek-content" style="overflow-wrap: break-word; word-break: break-word;">
-      <div class="markdown-safe-container">${r1IsLoading && !r1Content ? '<div style="color: #888;">正在加载回复...</div>' : md.render(r1Content || '')}</div>
-    </div>
-  </div>
-  <div class="split-view-column">
-    <div class="split-view-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #1890ff; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px;">GPT-4.5 ${gpt45IsLoading ? '<span style="color: #faad14; margin-left: 5px;">(加载中...)</span>' : gpt45IsStreaming ? '<span style="color: #52c41a; margin-left: 5px;">(生成中...)</span>' : ''}</div>
-    <div class="split-view-content gpt45-content" style="overflow-wrap: break-word; word-break: break-word;">
-      <div class="markdown-safe-container">${gpt45IsLoading && !gpt45Content ? '<div style="color: #888;">正在加载回复...</div>' : md.render(gpt45Content || '')}</div>
-    </div>
-  </div>
-</div>`.trim();
-};
 
 const Independent: React.FC = () => {
   const { styles } = useStyle()
@@ -207,27 +83,6 @@ const Independent: React.FC = () => {
     setIsRenameModalVisible(true)
   }
 
-  // 判断消息是否需要打字效果
-  const shouldUseTypingEffect = (message: MessageWithTimestamp): { step: number; interval: number; } | undefined => {
-    // 用户消息不需要打字效果
-    if (message.status === 'local') {
-      return undefined;
-    }
-    
-    // 根据当前选择的模型类型决定是否使用打字效果
-    if (message.activeModel === 'deepseek-r1') {
-      return message.deepseekR1Status === 'streaming' ? { step: 5, interval: 20 } : undefined;
-    } else if (message.activeModel === 'gpt4.5') {
-      return message.gpt45Status === 'streaming' ? { step: 5, interval: 20 } : undefined;
-    } else if (message.activeModel === 'split') {
-      // 分栏模式下不使用打字效果，因为会分别在各自的区域显示
-      return undefined;
-    }
-    
-    // 默认情况
-    return message.status === 'streaming' ? { step: 5, interval: 20 } : undefined;
-  }
-
   // 处理重命名确认
   const handleRenameConfirm = () => {
     if (newConversationName.trim()) {
@@ -237,11 +92,6 @@ const Independent: React.FC = () => {
     } else {
       message.error('会话名称不能为空')
     }
-  }
-
-  // 处理重命名取消
-  const handleRenameCancel = () => {
-    setIsRenameModalVisible(false)
   }
 
   const [agent] = useXAgent<string>({
@@ -1370,10 +1220,6 @@ const Independent: React.FC = () => {
     }
   }, [])
 
-  const onConversationClick = (key: string) => {
-    setActiveKey(key)
-  }
-
   // 添加删除所有会话的处理函数
   const handleDeleteAll = () => {
     deleteAllConversations()
@@ -1423,7 +1269,7 @@ const Independent: React.FC = () => {
       if (message.status === 'local') {
         return (
           <div className='message-footer-container'>
-            <div className='message-footer' style={footerContainerStyle}>
+            <div className='message-footer w-full flex' style={footerContainerStyle}>
               <div style={messageStyles.messageTime}>{formattedTime}</div>
               <div style={buttonAreaStyle}>
                 <Tooltip title='删除消息'>
@@ -1671,7 +1517,7 @@ const Independent: React.FC = () => {
         title='重命名会话'
         open={isRenameModalVisible}
         onOk={handleRenameConfirm}
-        onCancel={handleRenameCancel}
+        onCancel={() => setIsRenameModalVisible(false)}
         okText='确定'
         cancelText='取消'
       >
@@ -1702,7 +1548,9 @@ const Independent: React.FC = () => {
           items={conversationsItems}
           className={styles.conversations}
           activeKey={activeKey}
-          onActiveChange={onConversationClick}
+          onActiveChange={(key: string) => {
+            setActiveKey(key)
+          }}
           menu={menuConfig}
         />
         <div className={styles.menuFooter}>
@@ -1725,22 +1573,7 @@ const Independent: React.FC = () => {
       <div className={styles.chat}>
         <div className={styles.instructions}>
           <p className='m-0'>将DeepSeek R1满血版的思维链用于 GPT4.5 的推理。</p>
-          <div>
-            <Button
-              icon={<ShareAltOutlined />}
-              onClick={() => {
-                navigator.clipboard.writeText(window.location.href)
-                message.success('链接已复制到剪贴板')
-              }}
-              style={{ marginRight: 8 }}
-            />
-            <Button
-              icon={<GithubOutlined />}
-              onClick={() =>
-                window.open('https://github.com/yi-ge/deep-gpt4.5', '_blank')
-              }
-            />
-          </div>
+          <ShareLinks/>
         </div>
 
         {/* 聊天消息区域 */}
