@@ -898,11 +898,15 @@ const Independent: React.FC = () => {
 
               // 如果是第一条消息，生成标题
               if (isFirstMessage) {
-                setTimeout(() => {
-                  generateTitle([
+                setTimeout(async () => {
+                  const title = await generateTitle([
                     ...chatMessages,
                     { role: 'assistant', content: result },
                   ]);
+
+                  if (title) {
+                    updateConversationTitle(activeKey, title)
+                  }
                 }, 1000);
               }
               return;
@@ -1249,29 +1253,14 @@ const Independent: React.FC = () => {
         })
       : ''
 
-    // 共用的底部容器样式
-    const footerContainerStyle = {
-      width: '100%',
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    }
-
-    // 按钮区域样式
-    const buttonAreaStyle = {
-      marginLeft: '12px',
-      display: 'flex',
-      alignItems: 'center',
-    }
-
     try {
       // 用户消息底部只显示时间和删除按钮
       if (message.status === 'local') {
         return (
           <div className='message-footer-container'>
-            <div className='message-footer w-full flex' style={footerContainerStyle}>
-              <div style={messageStyles.messageTime}>{formattedTime}</div>
-              <div style={buttonAreaStyle}>
+            <div className='message-footer w-full flex justify-between items-center'>
+              <div className='text-gray-500'>{formattedTime}</div>
+              <div className='ml-3 flex items-center'>
                 <Tooltip title='删除消息'>
                   <Button
                     type='text'
@@ -1289,12 +1278,12 @@ const Independent: React.FC = () => {
       // AI消息底部显示时间和操作按钮
       return (
         <div className='message-footer-container'>
-          <div className='message-footer' style={footerContainerStyle}>
-            <div style={messageStyles.messageTime}>{formattedTime}</div>
-            <div style={buttonAreaStyle}>
+          <div className='message-footer w-full flex justify-between items-center'>
+            <div className='text-gray-500'>{formattedTime}</div>
+            <div className='ml-3 flex items-center'>
               {/* 模型选择按钮组 */}
               {message.deepseekR1Message && message.gpt45Message && (
-                <Space.Compact size='small' style={{ marginRight: '8px' }}>
+                <Space.Compact size='small' className='mr-2'>
                   <Tooltip title='显示DeepSeek R1回复'>
                     <Button
                       type={
@@ -1407,7 +1396,7 @@ const Independent: React.FC = () => {
       )
     } catch (e) {
       console.error('创建消息底部时出错:', e)
-      return <div style={messageStyles.messageTime}>{formattedTime}</div>
+      return <div className='text-gray-500'>{formattedTime}</div>
     }
   }
 
@@ -1618,18 +1607,18 @@ const Independent: React.FC = () => {
                     role: 'thinking',
                     content: `
 <div class="thinking-bubble">
-  <div class="thinking-header" style="display: flex; align-items: center; cursor: pointer;" data-message-id="${
+  <div class="thinking-header flex items-center cursor-pointer" data-message-id="${
     msg.id
   }">
-    <span style="margin-right: 8px;">${
+    <span class="mr-2">${
       isLoading
         ? '正在思考...'
         : msg.thinkingTime
         ? `思考用时 ${msg.thinkingTime} 秒`
         : '思考中'
     }</span>
-    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="transform: ${
-      isExpanded ? 'rotate(180deg)' : 'rotate(0deg)'
+    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="${
+      isExpanded ? 'transform rotate-180' : ''
     }">
       <polyline points="6 9 12 15 18 9"></polyline>
     </svg>
@@ -1637,7 +1626,7 @@ const Independent: React.FC = () => {
   ${
     isExpanded && msg.thinking
       ? `
-  <div style="margin-top: 8px; padding: 12px; background-color: white; border-radius: 4px; border: 1px solid #eee;">
+  <div class="mt-2 p-3 bg-white border rounded border-gray-200">
     ${md.render(msg.thinking)}
   </div>
   `
