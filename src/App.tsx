@@ -1,12 +1,8 @@
-import { Bubble, Conversations, Sender, useXAgent } from '@ant-design/x'
+import { Bubble, Sender, useXAgent } from '@ant-design/x'
 import type { ConversationsProps } from '@ant-design/x'
-import * as React from 'react'
-import { useEffect, useState } from 'react'
-import { messageStyles } from './styles/layout'
+import { useEffect, useState, FC } from 'react'
 import {
-  PlusOutlined,
   DeleteOutlined,
-  ClearOutlined,
   CopyOutlined,
   SyncOutlined,
   EditOutlined,
@@ -14,17 +10,14 @@ import {
 import {
   Button,
   message,
-  Popconfirm,
   Tooltip,
-  Modal,
-  Input,
   Space,
 } from 'antd'
 import './App.css'
-import './styles/splitView.css'
 import { useStyle } from './styles/layout'
-import Logo from './components/Logo'
 import ShareLinks from './components/ShareLinks'
+import RenameModal from './components/RenameModal'
+import SideMenu from './components/SideMenu'
 import { useConversations } from './hooks/useConversations'
 import { generateTitle } from './apis/generateTitle'
 import { BubbleItem } from './types/BubbleItem'
@@ -34,13 +27,13 @@ import { roles } from './components/roles'
 import { shouldUseTypingEffect } from './libs/shouldUseTypingEffect'
 
 
-const Independent: React.FC = () => {
+const Independent: FC = () => {
   const { styles } = useStyle()
 
-  const [content, setContent] = React.useState('')
+  const [content, setContent] = useState('')
 
   // 添加模型参数状态
-  const [modelParams] = React.useState({
+  const [modelParams] = useState({
     model: 'gpt-4.5-preview',
     temperature: 0.7,
     max_tokens: 2048,
@@ -69,7 +62,7 @@ const Independent: React.FC = () => {
   } = useConversations()
 
   // 将messages类型更新为包含时间戳
-  const [messages, setMessages] = React.useState<MessageWithTimestamp[]>([])
+  const [messages, setMessages] = useState<MessageWithTimestamp[]>([])
 
   // 添加重命名相关状态
   const [isRenameModalVisible, setIsRenameModalVisible] = useState(false)
@@ -84,14 +77,9 @@ const Independent: React.FC = () => {
   }
 
   // 处理重命名确认
-  const handleRenameConfirm = () => {
-    if (newConversationName.trim()) {
-      updateConversationTitle(renameConversationKey, newConversationName.trim())
-      message.success('会话已重命名')
-      setIsRenameModalVisible(false)
-    } else {
-      message.error('会话名称不能为空')
-    }
+  const handleRenameConfirm = (newName: string) => {
+    updateConversationTitle(renameConversationKey, newName)
+    setIsRenameModalVisible(false)
   }
 
   const [agent] = useXAgent<string>({
@@ -1502,63 +1490,23 @@ const Independent: React.FC = () => {
   return (
     <div className={styles.layout}>
       {/* 重命名模态框 */}
-      <Modal
-        title='重命名会话'
-        open={isRenameModalVisible}
+      <RenameModal
+        visible={isRenameModalVisible}
+        currentName={newConversationName}
         onOk={handleRenameConfirm}
         onCancel={() => setIsRenameModalVisible(false)}
-        okText='确定'
-        cancelText='取消'
-      >
-        <Input
-          placeholder='请输入会话名称'
-          value={newConversationName}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setNewConversationName(e.target.value)
-          }
-          onPressEnter={handleRenameConfirm}
-          autoFocus
-        />
-      </Modal>
+      />
 
-      <div className={styles.menu}>
-        <Logo />
-        <div className={styles.menuButtons}>
-          <Button
-            onClick={addConversation}
-            type='link'
-            className={styles.addBtn}
-            icon={<PlusOutlined />}
-          >
-            新建对话
-          </Button>
-        </div>
-        <Conversations
-          items={conversationsItems}
-          className={styles.conversations}
-          activeKey={activeKey}
-          onActiveChange={(key: string) => {
-            setActiveKey(key)
-          }}
-          menu={menuConfig}
-        />
-        <div className={styles.menuFooter}>
-          <Popconfirm
-            title='确定要删除所有会话吗？'
-            onConfirm={handleDeleteAll}
-            okText='是'
-            cancelText='否'
-          >
-            <Tooltip title='清空所有会话'>
-              <Button
-                type='text'
-                className={styles.clearBtn}
-                icon={<ClearOutlined />}
-              />
-            </Tooltip>
-          </Popconfirm>
-        </div>
-      </div>
+      <SideMenu
+        styles={styles}
+        conversationsItems={conversationsItems}
+        activeKey={activeKey}
+        setActiveKey={setActiveKey}
+        addConversation={addConversation}
+        handleDeleteAll={handleDeleteAll}
+        menuConfig={menuConfig}
+      />
+
       <div className={styles.chat}>
         <div className={styles.instructions}>
           <p className='m-0'>将DeepSeek R1满血版的思维链用于 GPT4.5 的推理。</p>
