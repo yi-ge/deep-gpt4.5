@@ -3,7 +3,7 @@ import { ChatMessage } from "../types/ChatMessage"
 // 生成标题的API
 export async function generateTitle (messages: ChatMessage[]): Promise<string | null> {
   try {
-    const response = await fetch('/v1/generate-title', {
+    const response = await fetch('/v1/generateTitle', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

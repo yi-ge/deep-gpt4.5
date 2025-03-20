@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 
 export const config = {
-  matcher: '/v1/generate-title',
+  matcher: '/v1/generateTitle',
   runtime: 'edge',
 }
 
