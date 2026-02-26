@@ -22,7 +22,7 @@
     "@vercel/edge": "^1.2.1",
     "antd": "^5.15.0",
     "antd-style": "^3.6.1",
-    "markdown-it": "^14.0.0",
+    "markdown-it": "^14.1.1",
     "openai": "^4.86.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
